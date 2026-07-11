@@ -1,0 +1,783 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>Smart Document Upload</title>
+    <script src="https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <script async src="https://docs.opencv.org/4.5.4/opencv.js" type="text/javascript"></script>
+    <style>
+        * { touch-action: manipulation; box-sizing: border-box; }
+        body { font-family: sans-serif; background: #f4f4f4; padding: 10px; }
+        .card { max-width: 450px; margin: auto; padding: 20px; background: #fff; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+        .input-group { margin-bottom: 15px; }
+        .input-group label { font-size: 14px; color: #555; display: block; margin-bottom: 5px; font-weight: bold; }
+        input, select { width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 4px; }
+        .preview-wrapper { width: 100%; max-width: 400px; height: 350px; margin: 15px auto; border: 2px dashed #1976d2; border-radius: 8px; background: #f8f9fa; overflow: auto; padding: 10px; }
+        .preview-box { width: 100%; min-height: 100%; display: flex; flex-direction: column; align-items: center; gap: 16px; }
+        
+        .preview-box.layout-grid-2 { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 8px !important; }
+        .preview-box.layout-grid-4 { display: grid !important; grid-template-columns: 1fr 1fr !important; gap: 6px !important; }
+        
+        .preview-box canvas { max-width: 100%; height: auto; display: block; border: 1px solid #ddd; border-radius: 4px; }
+        .page-render-container { display: flex; flex-direction: column; align-items: center; width: 100%; }
+        .canvas-container { position: relative; margin: 15px auto; width: 100%; max-width: 400px; background: #f5f5f5; border: 2px dashed #28a745; border-radius: 8px; overflow: hidden; }
+        #cropCanvas { display: block; width: 100%; height: auto; cursor: crosshair; }
+        .crop-controls { text-align: center; margin-bottom: 15px; display: flex; justify-content: center; gap: 8px; }
+        .crop-controls button { padding: 8px 12px; font-size: 14px; font-weight: bold; border: none; border-radius: 4px; cursor: pointer; color: white; transition: opacity 0.2s ease; }
+        .force-grayscale { filter: grayscale(100%) brightness(105%) contrast(105%) !important; }
+        #submitBtn { background: #1976d2; color: white; width: 100%; padding: 12px; border: none; border-radius: 6px; font-size: 16px; font-weight: bold; cursor: pointer; transition: opacity 0.2s ease; }
+        #submitBtn:disabled, #saveCropBtn:disabled { cursor: not-allowed; }
+    </style>
+</head>
+
+<body>
+<div class="card">
+    <h2>Upload Document</h2>
+
+    <input type="text" id="name" class="input-group" placeholder="Customer Name (Optional)">
+    <input type="tel" id="mobile" class="input-group" placeholder="Mobile Number (Optional)">
+    
+    <div class="input-group" style="background: #fff3e0; padding: 10px; border-radius: 6px; border: 1px solid #ffcc80;">
+        <label style="color: #e65100; font-size: 15px;">1. Select Print Type First:</label>
+        <select id="type" onchange="calculate(); applyPreviewFilter();" style="border: 2px solid #ff9800; font-weight: bold;">
+            <option value="5">Black & White (₹5 / page)</option>
+            <option value="10">Color (₹10 / page)</option>
+        </select>
+    </div>
+
+    <div class="input-group">
+        <label>2. Select File(s) (PDF or Multiple Images):</label>
+        <input type="file" id="file" accept="image/*,application/pdf" multiple onchange="handleFileSelectionChange()" required>
+    </div>
+
+    <!-- 🚀 HIDDEN: Image Print Size -->
+    <div class="input-group" id="docTypeGroup" style="display:none !important;">
+        <label style="color: #1565c0;">Image Print Size:</label>
+        <select id="docType">
+            <option value="full">Full Page (Marksheet / Poster)</option>
+        </select>
+    </div>
+
+    <div id="pdfUI" style="display:none;">
+        <div class="preview-wrapper" id="previewWrapperFrame">
+            <div class="preview-box" id="docPreview">
+                <span style="margin-top: 150px; color:#777;">Loading PDF Preview...</span>
+            </div>
+        </div>
+        <div class="input-group">
+            <label>Pages to Print:</label>
+            <input type="text" id="pages" placeholder="e.g., All, 1, 3-5" value="All" oninput="calculate(); previewDocument();">
+        </div>
+        <div class="input-group">
+            <label>Pages Per Sheet (Layout):</label>
+            <select id="layout_mode" onchange="calculate(); updateLivePreviewGrid();">
+                <option value="1">1 Page Per Sheet (Standard)</option>
+                <option value="2">2 Pages Per Sheet</option>
+                <option value="4">4 Pages Per Sheet</option>
+            </select>
+        </div>
+    </div>
+
+    <div id="imageUI" style="display: none;">
+        <h4 id="imageStatus" style="text-align: center; color: #1976d2; margin-bottom: 10px;"></h4>
+        
+        <!-- 🚀 HIDDEN: Magic Clean Filter (AI background me check karega) -->
+        <div class="input-group" style="display: none !important;">
+            <label style="color: #2e7d32;">✨ Magic Image Filter:</label>
+            <select id="imageFilter" style="border: 2px solid #4caf50; font-weight: bold;">
+                <option value="clean">Clean Document (Marksheet/Aadhaar ke liye)</option>
+                <option value="normal">Normal (WhatsApp Chats/Photos ke liye)</option>
+            </select>
+            <p id="autoDetectMsg"></p> <!-- Safe guard for JS -->
+        </div>
+
+        <div id="cropAreaWrapper">
+            <p style="font-size: 13px; color: #555; text-align: center;">Drag corners to crop your document perfectly.</p>
+            <div class="canvas-container" id="cropContainer">
+                <canvas id="cropCanvas"></canvas>
+            </div>
+            <div class="crop-controls">
+                <button type="button" style="background:#28a745;" onclick="rotateImage()">↻ Rotate</button>
+                <button type="button" style="background:#6c757d;" onclick="resetZoom()">Reset Zoom</button>
+                <button type="button" style="background:#1976d2;" id="saveCropBtn" onclick="saveCropAndNext()">Save Crop</button>
+            </div>
+        </div>
+        <div id="cropPreviewContainer" style="text-align: center; display: none; margin-bottom: 15px;">
+            <p style="font-size: 14px; color: #28a745; font-weight: bold; margin-top: 5px;">✓ All Images Cropped & Ready</p>
+        </div>
+    </div>
+
+    <div class="input-group">
+        <label>Number of Copies:</label>
+        <input type="number" id="copies" value="1" min="1" oninput="calculate()">
+    </div>
+
+    <h3 id="total" style="text-align:center;">Total: ₹5</h3>
+    <button id="submitBtn" onclick="submitOrder()">Submit Order</button>
+</div>
+
+<script>
+    document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
+    
+    // Keyboard ke Shortcuts Disable Karna
+    document.onkeydown = function(e) {
+        if (e.keyCode === 123) return false;
+        if (e.ctrlKey && e.shiftKey && e.keyCode === 73) return false;
+        if (e.ctrlKey && e.shiftKey && e.keyCode === 74) return false;
+        if (e.ctrlKey && e.shiftKey && e.keyCode === 67) return false;
+        if (e.ctrlKey && e.keyCode === 85) return false;
+    };
+
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
+const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
+
+// 🚀 MIXED FILES LOGIC VARIABLES
+let uploadedPdfFile = null;
+let uploadedImagesList = [];
+let totalDetectedPDFPages = 0;
+let cachedFileObject = null; 
+let activeRenderTaskId = 0; 
+let currentImageIndex = 0;
+let processedA4Images = []; 
+
+const cropEngine = { canvas: document.getElementById('cropCanvas'), ctx: document.getElementById('cropCanvas').getContext('2d'), img: null, corners: [], activeCorner: -1, rotation: 0, originalSrc: "", zoom: 1, offsetX: 0, offsetY: 0, isPanning: false, lastTouchDist: 0, lastTouchX: 0, lastTouchY: 0 };
+
+async function handleFileSelectionChange(){
+    const files = document.getElementById("file").files;
+    if (!files || files.length === 0) return;
+
+    let maxSizeInBytes = 20 * 1024 * 1024; // 20 MB
+    for (let i = 0; i < files.length; i++) {
+        if (files[i].size > maxSizeInBytes) {
+            alert(`⚠️ Error: "${files[i].name}" bahut badi file hai! Kripya 20MB se choti file upload karein.`);
+            document.getElementById("file").value = ""; 
+            return;
+        }
+    }
+
+    document.getElementById("type").disabled = true;
+
+    uploadedImagesList = [];
+    uploadedPdfFile = null;
+    processedA4Images = [];
+    currentImageIndex = 0;
+
+    for (let i = 0; i < files.length; i++) {
+        if (files[i].type.startsWith("image/")) {
+            uploadedImagesList.push(files[i]);
+        } else if (files[i].type === "application/pdf" && !uploadedPdfFile) {
+            uploadedPdfFile = files[i]; 
+        }
+    }
+
+    if (uploadedPdfFile) {
+        const fileArrayBuffer = await uploadedPdfFile.arrayBuffer();
+        const srcPdf = await PDFLib.PDFDocument.load(fileArrayBuffer);
+        totalDetectedPDFPages = srcPdf.getPageCount();
+    } else {
+        totalDetectedPDFPages = 0;
+    }
+
+    if (uploadedImagesList.length > 0) {
+        document.getElementById("pdfUI").style.display = "none";
+        document.getElementById("imageUI").style.display = "block";
+        document.getElementById("docTypeGroup").style.display = "none"; // 🚀 HIDDEN
+        document.getElementById("cropPreviewContainer").style.display = "none";
+        document.getElementById("cropAreaWrapper").style.display = "block";
+        
+        loadCurrentImageForCrop();
+        calculate();
+    } else if (uploadedPdfFile) {
+        cachedFileObject = uploadedPdfFile;
+        document.getElementById("pdfUI").style.display = "block";
+        document.getElementById("imageUI").style.display = "none";
+        document.getElementById("docTypeGroup").style.display = "none";
+        
+        await previewDocument();
+        calculate();
+    }
+}
+
+function loadCurrentImageForCrop() {
+    if (currentImageIndex >= uploadedImagesList.length) {
+        document.getElementById("cropAreaWrapper").style.display = "none";
+        
+        if (uploadedPdfFile) {
+            document.getElementById("imageUI").style.display = "none";
+            cachedFileObject = uploadedPdfFile;
+            document.getElementById("pdfUI").style.display = "block";
+            document.getElementById("docTypeGroup").style.display = "none";
+            previewDocument();
+        } else {
+            document.getElementById("cropPreviewContainer").style.display = "block";
+            document.getElementById("imageStatus").innerText = `Successfully Processed ${uploadedImagesList.length} Image(s)`;
+            if(document.getElementById("autoDetectMsg")) document.getElementById("autoDetectMsg").style.display = "none";
+        }
+        return;
+    }
+
+    document.getElementById("imageStatus").innerText = `Cropping Image ${currentImageIndex + 1} of ${uploadedImagesList.length}`;
+    
+    const btn = document.getElementById("saveCropBtn");
+    btn.disabled = false;
+    btn.style.opacity = "1";
+    
+    if (currentImageIndex === uploadedImagesList.length - 1) {
+        btn.innerText = uploadedPdfFile ? "Save Crop & Proceed to PDF" : "Save Crop & Finish";
+    } else {
+        btn.innerText = `Save Crop & Next (${currentImageIndex + 1}/${uploadedImagesList.length})`;
+    }
+
+    const reader = new FileReader();
+    reader.onload = e => {
+        const img = new Image();
+        img.onload = () => {
+            cropEngine.img = img;
+            
+            const w = 400;
+            const h = (img.height * 400) / img.width;
+            cropEngine.canvas.width = w;
+            cropEngine.canvas.height = h;
+            
+            let defaultCorners = [{x:30, y:30}, {x:w-30, y:30}, {x:w-30, y:h-30}, {x:30, y:h-30}];
+            cropEngine.corners = defaultCorners;
+
+            if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
+                try {
+                    let tempCanvas = document.createElement('canvas');
+                    tempCanvas.width = w; tempCanvas.height = h;
+                    tempCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
+
+                    let src = cv.imread(tempCanvas);
+                    let gray = new cv.Mat();
+                    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY, 0);
+
+                    // ========================================================
+                    // 🚀 SMART AI WHITENESS DETECTOR (PRO LEVEL)
+                    // ========================================================
+                    let thresh = new cv.Mat();
+                    cv.threshold(gray, thresh, 190, 255, cv.THRESH_BINARY); 
+                    
+                    let whitePixelCount = cv.countNonZero(thresh);
+                    let totalPixels = gray.rows * gray.cols;
+                    let whitenessPercentage = (whitePixelCount / totalPixels) * 100;
+                    
+                    let filterDropdown = document.getElementById("imageFilter");
+                    let autoMsg = document.getElementById("autoDetectMsg");
+                    
+                    if (filterDropdown && autoMsg) {
+                        if (whitenessPercentage > 35) {
+                            filterDropdown.value = "clean";
+                            autoMsg.innerHTML = `🤖 <b>Auto-Detect:</b> White Paper Detected (<b>${Math.round(whitenessPercentage)}% Whiteness</b>). Set to Clean.`;
+                        } else {
+                            filterDropdown.value = "normal";
+                            autoMsg.innerHTML = `🤖 <b>Auto-Detect:</b> Photo/Screenshot Detected (<b>${Math.round(whitenessPercentage)}% Whiteness</b>). Set to Normal.`;
+                        }
+                    }
+                    thresh.delete();
+                    // ========================================================
+
+                    cv.GaussianBlur(gray, gray, new cv.Size(5, 5), 0, 0, cv.BORDER_DEFAULT);
+                    cv.Canny(gray, gray, 75, 200);
+
+                    let contours = new cv.MatVector();
+                    let hierarchy = new cv.Mat();
+                    cv.findContours(gray, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+
+                    let maxArea = 0;
+                    let bestApprox = new cv.Mat();
+                    
+                    for (let i = 0; i < contours.size(); ++i) {
+                        let cnt = contours.get(i);
+                        let area = cv.contourArea(cnt);
+                        
+                        if (area > maxArea) {
+                            let peri = cv.arcLength(cnt, true);
+                            let approx = new cv.Mat();
+                            cv.approxPolyDP(cnt, approx, 0.05 * peri, true);
+                            
+                            if (approx.rows === 4) {
+                                maxArea = area;
+                                approx.copyTo(bestApprox);
+                            }
+                            approx.delete();
+                        }
+                    }
+
+                    if (maxArea > (w * h * 0.1)) { 
+                        let pts = [];
+                        for (let i = 0; i < 4; i++) {
+                            pts.push({ x: bestApprox.data32S[i * 2], y: bestApprox.data32S[i * 2 + 1] });
+                        }
+                        
+                        pts.sort((a, b) => a.y - b.y); 
+                        let top = pts.slice(0, 2).sort((a, b) => a.x - b.x); 
+                        let bottom = pts.slice(2, 4).sort((a, b) => b.x - a.x); 
+                        
+                        cropEngine.corners = [top[0], top[1], bottom[0], bottom[1]];
+                    }
+
+                    src.delete(); gray.delete(); contours.delete(); hierarchy.delete(); bestApprox.delete();
+                } catch (err) {
+                    console.log("Auto-Detect fail hua.", err);
+                }
+            }
+
+            cropEngine.rotation = 0; 
+            cropEngine.originalSrc = e.target.result;
+            resetZoom();
+            drawCrop();
+        };
+        img.src = e.target.result;
+    };
+    reader.readAsDataURL(uploadedImagesList[currentImageIndex]);
+}
+
+function updateLivePreviewGrid() {
+    const layoutMode = document.getElementById("layout_mode").value;
+    const previewBox = document.getElementById("docPreview");
+    previewBox.className = "preview-box"; 
+    if (layoutMode === "2") previewBox.classList.add("layout-grid-2");
+    if (layoutMode === "4") previewBox.classList.add("layout-grid-4");
+}
+
+function parsePageSelection(pageInput) {
+    let clean = pageInput.replace(/\s+/g, '').toLowerCase();
+    if (clean === "all" || clean === "") return null;
+    let selected = [];
+    clean.split(",").forEach(part => {
+        if (part.includes("-")) { let [s, e] = part.split("-"); for (let i = parseInt(s); i <= parseInt(e); i++) selected.push(i); } 
+        else selected.push(parseInt(part));
+    });
+    return selected;
+}
+
+async function previewDocument() {
+    const currentTaskId = ++activeRenderTaskId; 
+    const previewContainer = document.getElementById("docPreview");
+    let pageInput = document.getElementById("pages").value.trim();
+
+    try {
+        const fileArrayBuffer = await cachedFileObject.arrayBuffer();
+        const pdf = await pdfjsLib.getDocument({ data: fileArrayBuffer }).promise;
+        if (currentTaskId !== activeRenderTaskId) return;
+
+        let targetPagesList = parsePageSelection(pageInput);
+        let pagesToRender = (targetPagesList === null || targetPagesList.length === 0 || pageInput.toLowerCase() === "all") 
+            ? Array.from({length: pdf.numPages}, (_, i) => i + 1) 
+            : targetPagesList.filter(p => p >= 1 && p <= pdf.numPages);
+
+        previewContainer.innerHTML = pagesToRender.length === 0 ? "<span>Invalid page selection</span>" : ""; 
+
+        for (let pageNum of pagesToRender) {
+            if (currentTaskId !== activeRenderTaskId) return;
+            const page = await pdf.getPage(pageNum);
+            const pageWrapper = document.createElement('div');
+            pageWrapper.className = 'page-render-container';
+
+            const canvas = document.createElement('canvas');
+            const context = canvas.getContext('2d');
+            const initialViewport = page.getViewport({ scale: 1.0 });
+            const viewport = page.getViewport({ scale: 380 / initialViewport.width });
+
+            canvas.width = viewport.width;
+            canvas.height = viewport.height;
+            pageWrapper.appendChild(canvas);
+
+            const pageLabel = document.createElement('div');
+            pageLabel.innerText = `Page ${pageNum}`;
+            pageLabel.style.fontSize = "13px";
+            pageLabel.style.color = "#555";
+            pageLabel.style.fontWeight = "bold";
+            pageLabel.style.marginTop = "8px";
+            pageWrapper.appendChild(pageLabel);
+
+            previewContainer.appendChild(pageWrapper);
+            await page.render({ canvasContext: context, viewport: viewport }).promise;
+        }
+    } catch (err) { console.error(err); }
+    updateLivePreviewGrid();
+    applyPreviewFilter();
+}
+
+function rotateImage() {
+    if (!cropEngine.originalSrc) return;
+    cropEngine.rotation = (cropEngine.rotation + 90) % 360;
+    const tempImg = new Image();
+    tempImg.onload = function() {
+        const internalCanvas = document.createElement('canvas');
+        if (cropEngine.rotation % 180 !== 0) {
+            internalCanvas.width = tempImg.height; internalCanvas.height = tempImg.width;
+        } else {
+            internalCanvas.width = tempImg.width; internalCanvas.height = tempImg.height;
+        }
+        const ctx = internalCanvas.getContext('2d');
+        ctx.translate(internalCanvas.width / 2, internalCanvas.height / 2);
+        ctx.rotate((cropEngine.rotation * Math.PI) / 180);
+        ctx.drawImage(tempImg, -tempImg.width / 2, -tempImg.height / 2);
+        
+        const rotatedImg = new Image();
+        rotatedImg.onload = function() {
+            cropEngine.canvas.height = (rotatedImg.height * 400) / rotatedImg.width;
+            cropEngine.img = rotatedImg;
+            cropEngine.corners = [{x:30, y:30}, {x:400-30, y:30}, {x:400-30, y:cropEngine.canvas.height-30}, {x:30, y:cropEngine.canvas.height-30}];
+            drawCrop();
+        };
+        rotatedImg.src = internalCanvas.toDataURL("image/jpeg");
+    };
+    tempImg.src = cropEngine.originalSrc;
+}
+
+function resetZoom() { cropEngine.zoom = 1; cropEngine.offsetX = 0; cropEngine.offsetY = 0; drawCrop(); }
+
+function drawCrop() {
+    const s = cropEngine; if (!s.img) return;
+    s.ctx.clearRect(0, 0, s.canvas.width, s.canvas.height);
+    s.ctx.save(); s.ctx.translate(s.offsetX, s.offsetY); s.ctx.scale(s.zoom, s.zoom);
+    s.ctx.drawImage(s.img, 0, 0, s.canvas.width, s.canvas.height); s.ctx.restore();
+    s.ctx.strokeStyle = '#28a745'; s.ctx.lineWidth = 2;
+    s.ctx.beginPath(); s.ctx.moveTo(s.corners[0].x, s.corners[0].y);
+    for (let i = 1; i < 4; i++) s.ctx.lineTo(s.corners[i].x, s.corners[i].y);
+    s.ctx.closePath(); s.ctx.stroke();
+    s.corners.forEach(c => { s.ctx.fillStyle = '#28a745'; s.ctx.beginPath(); s.ctx.arc(c.x, c.y, 14, 0, Math.PI * 2); s.ctx.fill(); s.ctx.strokeStyle = '#fff'; s.ctx.lineWidth = 3; s.ctx.stroke(); });
+}
+
+// ==========================================
+// 🚀 1. SUPER-FAST CROP & FILTER ENGINE (OPENCV)
+// ==========================================
+async function saveCropAndNext() {
+    const s = cropEngine; if (!s.img) return alert("Upload image first.");
+    
+    const btn = document.getElementById("saveCropBtn");
+    btn.disabled = true;
+    btn.style.opacity = "0.5";
+    btn.innerText = "Processing Fast...";
+
+    await new Promise(resolve => setTimeout(resolve, 50));
+
+    const mappedCorners = s.corners.map(c => ({ x: (c.x - s.offsetX) / s.zoom, y: (c.y - s.offsetY) / s.zoom }));
+    
+    const p1 = [mappedCorners[0].x / s.canvas.width, mappedCorners[0].y / s.canvas.height];
+    const p2 = [mappedCorners[1].x / s.canvas.width, mappedCorners[1].y / s.canvas.height];
+    const p3 = [mappedCorners[2].x / s.canvas.width, mappedCorners[2].y / s.canvas.height];
+    const p4 = [mappedCorners[3].x / s.canvas.width, mappedCorners[3].y / s.canvas.height];
+
+    let targetW = Math.round(Math.max(
+        Math.hypot((p2[0]-p1[0])*s.img.width, (p2[1]-p1[1])*s.img.height),
+        Math.hypot((p3[0]-p4[0])*s.img.width, (p3[1]-p4[1])*s.img.height)
+    ));
+    let targetH = Math.round(Math.max(
+        Math.hypot((p4[0]-p1[0])*s.img.width, (p4[1]-p1[1])*s.img.height),
+        Math.hypot((p3[0]-p2[0])*s.img.width, (p3[1]-p2[1])*s.img.height)
+    ));
+
+    if (targetW > 2500 || targetH > 3500) {
+        const scale = 3000 / Math.max(targetW, targetH);
+        targetW = Math.round(targetW * scale);
+        targetH = Math.round(targetH * scale);
+    }
+
+    let hCvs = document.createElement('canvas'); hCvs.width = targetW; hCvs.height = targetH;
+
+    if (typeof cv !== 'undefined') {
+        let printType = document.getElementById("type").value; 
+        let filterType = document.getElementById("imageFilter").value; // 🚀 MAGIC FILTER CHOICE (Auto selected in background)
+        let src, dest, srcTri, dstTri, M;
+
+        try {
+            let imgCanvas = document.createElement('canvas');
+            imgCanvas.width = s.img.width; imgCanvas.height = s.img.height;
+            imgCanvas.getContext('2d').drawImage(s.img, 0, 0);
+            src = cv.imread(imgCanvas);
+
+            srcTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                p1[0] * src.cols, p1[1] * src.rows, 
+                p2[0] * src.cols, p2[1] * src.rows, 
+                p3[0] * src.cols, p3[1] * src.rows, 
+                p4[0] * src.cols, p4[1] * src.rows  
+            ]);
+            dstTri = cv.matFromArray(4, 1, cv.CV_32FC2, [
+                0, 0, targetW, 0, targetW, targetH, 0, targetH
+            ]);
+
+            M = cv.getPerspectiveTransform(srcTri, dstTri);
+            dest = new cv.Mat();
+            cv.warpPerspective(src, dest, M, new cv.Size(targetW, targetH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
+
+            if (printType == "5") {
+                if (filterType === "clean") {
+                    cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
+                    
+                    cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
+                    cv.convertScaleAbs(dest, dest, 1.4, -40); 
+                    
+                } else {
+                    cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
+                    cv.convertScaleAbs(dest, dest, 1.1, 0); 
+                }
+            } else {
+                cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
+                cv.convertScaleAbs(dest, dest, 1.05, 5); 
+            }
+
+            cv.imshow(hCvs, dest);
+        } catch (e) { 
+            console.warn("CV Error", e); 
+            hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
+        } finally {
+            if (src) src.delete(); if (dest) dest.delete();
+            if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
+        }
+    } else {
+        hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
+    }
+
+    const a4DataUrl = await convertToA4(hCvs);
+    processedA4Images.push(a4DataUrl);
+    
+    currentImageIndex++;
+    loadCurrentImageForCrop();
+    calculate();
+}
+
+// ==========================================
+// 🚀 2. ZERO MARGIN (FULL STRETCH) & AUTO-ROTATE
+// ==========================================
+async function convertToA4(sourceCanvas) {
+    return new Promise(resolve => {
+        const a4 = document.createElement('canvas'); 
+        a4.width = 2480; 
+        a4.height = 3508; 
+        const ctx = a4.getContext('2d'); 
+        ctx.fillStyle = '#FFFFFF'; 
+        ctx.fillRect(0,0,a4.width,a4.height);
+        
+        let drawCanvas = sourceCanvas;
+        if (sourceCanvas.width > sourceCanvas.height) {
+            drawCanvas = document.createElement('canvas');
+            drawCanvas.width = sourceCanvas.height;
+            drawCanvas.height = sourceCanvas.width;
+            const rotCtx = drawCanvas.getContext('2d');
+            rotCtx.translate(drawCanvas.width / 2, drawCanvas.height / 2);
+            rotCtx.rotate(Math.PI / 2);
+            rotCtx.drawImage(sourceCanvas, -sourceCanvas.width / 2, -sourceCanvas.height / 2);
+        }
+        
+        if (document.getElementById("type").value == 5 && typeof cv === 'undefined') {
+            let filterType = document.getElementById("imageFilter") ? document.getElementById("imageFilter").value : "normal";
+            if (filterType === "clean") {
+                ctx.filter = 'grayscale(100%) contrast(115%) brightness(105%)'; 
+            } else {
+                ctx.filter = 'grayscale(100%) contrast(110%)'; 
+            }
+        }
+
+        ctx.drawImage(drawCanvas, 0, 0, a4.width, a4.height); 
+        ctx.filter = 'none';
+
+        resolve(a4.toDataURL("image/jpeg", 0.95));
+    });
+}
+
+function getPos(e) { const r=cropEngine.canvas.getBoundingClientRect(); return { x:((e.touches?e.touches[0].clientX:e.clientX)-r.left)*(cropEngine.canvas.width/r.width), y:((e.touches?e.touches[0].clientY:e.clientY)-r.top)*(cropEngine.canvas.height/r.height) }; }
+cropEngine.canvas.addEventListener('touchstart', e=>{ const s=cropEngine; if(e.touches.length===2){ s.activeCorner=-1; s.isPanning=false; s.lastTouchDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); s.lastTouchX=(e.touches[0].clientX+e.touches[1].clientX)/2; s.lastTouchY=(e.touches[0].clientY+e.touches[1].clientY)/2; } else if(e.touches.length===1){ const p=getPos(e); s.activeCorner=s.corners.findIndex(c=>Math.hypot(c.x-p.x,c.y-p.y)<45); if(s.activeCorner===-1 && s.zoom>1){s.isPanning=true; s.lastTouchX=e.touches[0].clientX; s.lastTouchY=e.touches[0].clientY;} } }, {passive:false});
+cropEngine.canvas.addEventListener('touchmove', e=>{ const s=cropEngine; e.preventDefault(); if(e.touches.length===2){ const cDist=Math.hypot(e.touches[0].clientX-e.touches[1].clientX,e.touches[0].clientY-e.touches[1].clientY); const cx=(e.touches[0].clientX+e.touches[1].clientX)/2, cy=(e.touches[0].clientY+e.touches[1].clientY)/2; let nz=s.zoom*(cDist/s.lastTouchDist); nz=Math.max(1,Math.min(8,nz)); const r=s.canvas.getBoundingClientRect(); const rx=(cx-r.left)*(s.canvas.width/r.width), ry=(cy-r.top)*(s.canvas.height/r.height); s.offsetX=rx-(rx-s.offsetX)*(nz/s.zoom); s.offsetY=ry-(ry-s.offsetY)*(nz/s.zoom); s.zoom=nz; s.offsetX+=(cx-s.lastTouchX); s.offsetY+=(cy-s.lastTouchY); s.lastTouchDist=cDist; s.lastTouchX=cx; s.lastTouchY=cy; if(s.zoom===1){s.offsetX=0;s.offsetY=0;} drawCrop(); } else if(e.touches.length===1){ if(s.activeCorner!==-1){ const p=getPos(e); s.corners[s.activeCorner]={x:Math.max(0,Math.min(s.canvas.width,p.x)), y:Math.max(0,Math.min(s.canvas.height,p.y))}; drawCrop(); }else if(s.isPanning){ s.offsetX+=(e.touches[0].clientX-s.lastTouchX); s.offsetY+=(e.touches[0].clientY-s.lastTouchY); s.lastTouchX=e.touches[0].clientX; s.lastTouchY=e.touches[0].clientY; drawCrop(); } } }, {passive:false});
+window.addEventListener('touchend', ()=>{cropEngine.activeCorner=-1; cropEngine.isPanning=false;});
+cropEngine.canvas.addEventListener('mousedown', e=>{ const s=cropEngine; const p=getPos(e); s.activeCorner=s.corners.findIndex(c=>Math.hypot(c.x-p.x,c.y-p.y)<45); if(s.activeCorner===-1 && s.zoom>1){s.isPanning=true; s.lastTouchX=e.clientX; s.lastTouchY=e.clientY;} });
+cropEngine.canvas.addEventListener('mousemove', e=>{ const s=cropEngine; if(s.activeCorner!==-1){ const p=getPos(e); s.corners[s.activeCorner]={x:Math.max(0,Math.min(s.canvas.width,p.x)), y:Math.max(0,Math.min(s.canvas.height,p.y))}; drawCrop(); }else if(s.isPanning){ s.offsetX+=(e.clientX-s.lastTouchX); s.offsetY+=(e.clientY-s.lastTouchY); s.lastTouchX=e.clientX; s.lastTouchY=e.clientY; drawCrop(); } });
+window.addEventListener('mouseup', ()=>{cropEngine.activeCorner=-1; cropEngine.isPanning=false;});
+cropEngine.canvas.addEventListener('wheel', e=>{ e.preventDefault(); const s=cropEngine; const m=getPos(e); let nz=e.deltaY<0?s.zoom*1.1:s.zoom/1.1; nz=Math.max(1,Math.min(8,nz)); s.offsetX=m.x-(m.x-s.offsetX)*(nz/s.zoom); s.offsetY=m.y-(m.y-s.offsetY)*(nz/s.zoom); s.zoom=nz; if(s.zoom===1){s.offsetX=0;s.offsetY=0;} drawCrop(); }, {passive:false});
+
+function applyPreviewFilter() {
+    const isBw = document.getElementById("type").value == 5;
+    if (document.getElementById("previewWrapperFrame")) {
+        document.getElementById("previewWrapperFrame").classList.toggle("force-grayscale", isBw);
+    }
+}
+
+function calculate() {
+    let copies = parseInt(document.getElementById("copies").value) || 1;
+    let price = parseInt(document.getElementById("type").value);
+    let sheets = 0;
+    
+    if (uploadedImagesList.length > 0) {
+        sheets += uploadedImagesList.length;
+    }
+    
+    if (uploadedPdfFile) {
+        let layoutDivisor = parseInt(document.getElementById("layout_mode")?.value) || 1;
+        let selectedPages = parsePageSelection(document.getElementById("pages")?.value || "");
+        let totalPages = selectedPages !== null && selectedPages.length > 0 ? selectedPages.length : totalDetectedPDFPages;
+        sheets += Math.ceil(totalPages / layoutDivisor);
+    }
+    
+    if (sheets === 0) sheets = 1;
+    
+    document.getElementById("total").innerHTML = "Total: ₹" + (sheets * price * copies);
+}
+
+
+// ==========================================
+// 👑 SUBMIT ORDER (MIXED FILES MERGE & SAVE)
+// ==========================================
+async function submitOrder() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'vishu') {
+        sessionStorage.setItem('adminMode', 'true');
+    }
+    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
+
+    const lastOrderTime = localStorage.getItem("last_order_time");
+    if (!isAdmin && lastOrderTime && (Date.now() - parseInt(lastOrderTime)) < 60000) { 
+        alert("⏳ Security Alert: Please wait 1 minute before placing another order.");
+        return;
+    }
+
+    const rawName = document.getElementById("name").value.trim();
+    const rawMobile = document.getElementById("mobile").value.trim();
+    
+    const name = rawName.replace(/<[^>]*>?/gm, ''); 
+    const mobile = rawMobile.replace(/[^0-9+]/g, ''); 
+
+    if (rawName !== name || rawMobile !== mobile) {
+        alert("⚠️ Invalid characters detected in Name or Mobile!");
+        return;
+    }
+
+    if (!uploadedPdfFile && uploadedImagesList.length === 0) return alert("Please select a document.");
+    
+    if (uploadedImagesList.length > 0 && processedA4Images.length !== uploadedImagesList.length) {
+        return alert("Please crop and save all selected images first.");
+    }
+
+    const submitBtn = document.getElementById("submitBtn");
+    submitBtn.innerText = "Uploading... Please wait";
+    submitBtn.disabled = true;
+    submitBtn.style.opacity = "0.5";
+
+    try {
+        let processedBlob = null;
+        let finalMime = "application/pdf";
+        let layoutVal = document.getElementById("layout_mode") ? document.getElementById("layout_mode").value : 1;
+
+        // MASTER PDF FOR COMBINING
+        const outPdf = await PDFLib.PDFDocument.create();
+        
+        // 1. ADD CROPPED IMAGES
+        if (processedA4Images.length > 0) {
+            for (let dataUrl of processedA4Images) {
+                const imgBytes = await fetch(dataUrl).then(res => res.arrayBuffer());
+                const image = await outPdf.embedJpg(imgBytes);
+                const page = outPdf.addPage([2480, 3508]); 
+                page.drawImage(image, { x: 0, y: 0, width: 2480, height: 3508 });
+            }
+        }
+
+        // 2. ADD PDF PAGES
+        if (uploadedPdfFile) {
+            const srcPdfDoc = await PDFLib.PDFDocument.load(await uploadedPdfFile.arrayBuffer());
+            let pagesSel = parsePageSelection(document.getElementById("pages").value);
+            let indices = pagesSel ? pagesSel.filter(p => p <= srcPdfDoc.getPageCount()).map(p => p - 1) : Array.from({length: srcPdfDoc.getPageCount()}, (_, i) => i);
+
+            if (document.getElementById("type").value == 5) {
+                const fileArrayBuffer = await uploadedPdfFile.arrayBuffer();
+                const pdfjsDoc = await pdfjsLib.getDocument({ data: fileArrayBuffer }).promise;
+                
+                for (let i of indices) {
+                    const page = await pdfjsDoc.getPage(i + 1);
+                    const viewport = page.getViewport({ scale: 3.0 }); 
+                    const canvas = document.createElement('canvas');
+                    canvas.width = viewport.width;
+                    canvas.height = viewport.height;
+                    const ctx = canvas.getContext('2d');
+                    
+                    await page.render({ canvasContext: ctx, viewport: viewport }).promise;
+                    
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const data = imgData.data;
+                    for (let j = 0; j < data.length; j += 4) {
+                        let gray = 0.299 * data[j] + 0.587 * data[j+1] + 0.114 * data[j+2];
+                        data[j] = data[j+1] = data[j+2] = gray;
+                    }
+                    ctx.putImageData(imgData, 0, 0);
+                    
+                    const imgDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+                    const imgBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
+                    const embeddedImage = await outPdf.embedJpg(imgBytes);
+                    
+                    const outPage = outPdf.addPage([viewport.width, viewport.height]);
+                    outPage.drawImage(embeddedImage, {
+                        x: 0, y: 0, width: viewport.width, height: viewport.height
+                    });
+                }
+            } else {
+                const copied = await outPdf.copyPages(srcPdfDoc, indices);
+                copied.forEach(p => outPdf.addPage(p));
+            }
+        }
+        
+        processedBlob = new Blob([await outPdf.save()], { type: "application/pdf" });
+
+        const ext = ".pdf";
+        const typeSelect = document.getElementById("type");
+        const selectedTypeValue = typeSelect.value;
+        const pre = selectedTypeValue == 5 ? "bw_" : "color_";
+        
+        let baseName = "mixed_doc";
+        if (uploadedPdfFile) {
+            baseName = uploadedPdfFile.name.split('.')[0];
+        } else if (uploadedImagesList.length > 0) {
+            baseName = uploadedImagesList[0].name.split('.')[0];
+        }
+        
+        const fileName = `${Date.now()}_${pre}${baseName}${ext}`;
+
+        const { error: uploadError } = await client.storage.from("documents").upload(fileName, processedBlob, { contentType: finalMime, upsert: true });
+        if (uploadError) throw uploadError;
+
+        const copies = document.getElementById("copies").value;
+        const amount = parseInt(document.getElementById("total").innerHTML.replace("Total: ₹", ""));
+        const printStr = `${typeSelect.options[typeSelect.selectedIndex].text}`;
+
+        const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
+        const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
+
+        const { data: order, error } = await client.from("orders").insert([{
+            customer_name: name || (isAdmin ? "Shop Admin" : "Guest"),
+            mobile: mobile || "N/A", 
+            pages: copies, print_type: printStr, amount: amount,
+            file_url: client.storage.from("documents").getPublicUrl(fileName).data.publicUrl, 
+            payment_status: finalPaymentStatus, 
+            payment_id: finalPaymentId,
+            layout_mode: layoutVal
+        }]).select();
+
+        if (error) throw error;
+        
+        localStorage.setItem("last_order_time", Date.now());
+        localStorage.setItem("amount", amount); 
+        localStorage.setItem("mobile", mobile); 
+        localStorage.setItem("current_order_id", order[0].id);
+        
+        if (isAdmin) {
+            alert("👑 Owner Mode: Document sent directly to printer! No payment required.");
+            window.location.reload(); 
+        } else {
+            window.location.href = "payment.html"; 
+        }
+
+    } catch (err) {
+        alert(err.message);
+        submitBtn.innerText = "Submit Order";
+        submitBtn.disabled = false;
+        submitBtn.style.opacity = "1";
+    }
+}
+</script>
+
+</body>
+</html>
