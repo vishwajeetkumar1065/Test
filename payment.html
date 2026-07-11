@@ -1,0 +1,209 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Secure Checkout - Select Payment Method</title>
+    <link rel="stylesheet" href="css/style.css">
+    <style>
+        .payment-container {
+            max-width: 450px;
+            margin: 40px auto;
+            padding: 25px;
+            background: #ffffff;
+            border-radius: 12px;
+            box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+            text-align: center;
+        }
+        .amount-display {
+            font-size: 26px;
+            font-weight: bold;
+            color: #1976d2;
+            margin: 20px 0;
+            background: #f0f7ff;
+            padding: 15px;
+            border-radius: 8px;
+            border: 2px dashed #1976d2;
+        }
+        .pay-btn {
+            display: block;
+            width: 100%;
+            padding: 16px;
+            margin-bottom: 15px;
+            font-size: 16px;
+            font-weight: bold;
+            border-radius: 8px;
+            border: none;
+            cursor: pointer;
+            transition: all 0.2s ease;
+        }
+        .rzp-btn {
+            color: white;
+            background: #3399cc;
+            box-shadow: 0 4px 12px rgba(51, 153, 204, 0.3);
+        }
+        .rzp-btn:hover {
+            background: #287a9e;
+        }
+        .cash-btn {
+            color: white;
+            background-color: #28a745;
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.25);
+        }
+        .cash-btn:hover {
+            background-color: #218838;
+        }
+        .cancel-btn {
+            color: #721c24;
+            background-color: #f8d7da;
+            box-shadow: none;
+            border: 1px solid #f1b0b7;
+            margin-bottom: 0;
+        }
+        .cancel-btn:hover {
+            background-color: #f1b0b7;
+        }
+    </style>
+</head>
+<body>
+
+<div class="payment-container">
+    <h2>Select Payment Method</h2>
+    <p style="color: #666; font-size: 14px;">Choose how you want to settle your printing tab balance parameters.</p>
+    
+    <div class="amount-display" id="priceDisplay">Amount to Pay: ₹0</div>
+
+    <button class="pay-btn rzp-btn" onclick="openRazorpayCheckout(event)">💳 PAY ONLINE NOW</button>
+    
+    <button class="pay-btn cash-btn" onclick="processCashPayment(event)">💵 PAY WITH CASH AT COUNTER</button>
+
+    <button class="pay-btn cancel-btn" onclick="cancelOrder(event)">✖ Cancel Order / Wrong File</button>
+</div>
+
+<script src="https://checkout.razorpay.com/v1/checkout.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+<script src="config.js"></script>
+
+<script>
+    const billingAmount = localStorage.getItem("amount") || "0";
+    const targetOrderId = localStorage.getItem("current_order_id");
+
+    const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
+
+    window.onload = function() {
+        if (billingAmount === "0" || !targetOrderId) {
+            window.location.href = "upload.html";
+            return;
+        }
+        document.getElementById("priceDisplay").innerText = "Amount to Pay: ₹" + billingAmount;
+    };
+
+    // 🌐 OPTION 1: ONLINE GATEWAY ENGINE ROUTE
+    async function openRazorpayCheckout(e) {
+        e.preventDefault();
+
+        const amountInPaise = parseFloat(billingAmount) * 100;
+        let updateFired = false;
+
+        // 🚀 CORRECTED: .execute() hata kar standard format me background sync trigger kiya
+        try {
+            await client.from("orders").update({ payment_status: "Processing" }).eq("id", targetOrderId);
+        } catch (err) {
+            console.error("Initial processing state update skip", err);
+        }
+
+        const options = {
+            "key": "rzp_live_T6wxJ6u8vpDN2u", 
+            "amount": amountInPaise.toString(),
+            "currency": "INR",
+            "name": window.SITE_CONFIG.STORE_NAME || "Digital Print Shop",
+            "description": "Payment for Order #" + targetOrderId,
+            "notes": {
+                "current_order_id": targetOrderId
+            },
+            "modal": {
+                "ondismiss": function() {
+                    console.log("Checkout overlay sheets dismissed.");
+                }
+            },
+            "handler": async function (response) {
+                if (updateFired) return;
+                updateFired = true;
+
+                const preventClose = (event) => {
+                    event.preventDefault();
+                    event.returnValue = "Locking print session...";
+                };
+                window.addEventListener("beforeunload", preventClose);
+
+                try {
+                    await client.from("orders").update({ payment_status: "Success" }).eq("id", targetOrderId);
+                    localStorage.setItem("last_payment_method", "Razorpay Gateway");
+                    localStorage.setItem("payment_id", response.razorpay_payment_id || "");
+                    window.removeEventListener("beforeunload", preventClose);
+                    window.location.href = "success.html";
+                } catch (err) {
+                    localStorage.setItem("payment_id", response.razorpay_payment_id || "");
+                    window.removeEventListener("beforeunload", preventClose);
+                    window.location.href = "success.html";
+                }
+            },
+            "theme": { "color": "#3399cc" }
+        };
+
+        const rzp = new Razorpay(options);
+        rzp.open();
+
+        // ⏱️ SILENT BACKGROUND POLLER 
+        const silentPoller = setInterval(async () => {
+            if (updateFired) {
+                clearInterval(silentPoller);
+                return;
+            }
+            
+            if (rzp && rzp.checkout && rzp.checkout.closed === false) {
+                try {
+                    const { data } = await client.from("orders").select("payment_status").eq("id", targetOrderId).single();
+                    if (data && (data.payment_status === "Success" || data.payment_status === "Paid")) {
+                        updateFired = true;
+                        clearInterval(silentPoller);
+                        window.location.href = "success.html";
+                    }
+                } catch(e) {}
+            }
+        }, 1500);
+    }
+
+    // 🏦 OPTION 2: CASH AT COUNTER BACKEND REGISTRATION FLOW
+    async function processCashPayment(e) {
+        e.preventDefault();
+        try {
+            await client.from("orders").update({ payment_status: "Cash Payment Pending" }).eq("id", targetOrderId);
+        } catch (dbError) {}
+        localStorage.setItem("last_payment_method", "Cash Counter");
+        window.location.href = "cash.html";
+    }
+
+    // ✖ OPTION 3: CANCEL ORDER (wrong file / changed mind)
+    async function cancelOrder(e) {
+        e.preventDefault();
+        if (!confirm("Cancel this order and start over? Your uploaded file will not be printed.")) return;
+
+        try {
+            await client.from("orders").update({ payment_status: "Cancelled" }).eq("id", targetOrderId);
+        } catch (dbError) {
+            console.error("Cancel update failed", dbError);
+        }
+
+        localStorage.removeItem("amount");
+        localStorage.removeItem("mobile");
+        localStorage.removeItem("current_order_id");
+        localStorage.removeItem("printType");
+        localStorage.removeItem("last_payment_method");
+        localStorage.removeItem("payment_id");
+
+        window.location.href = "index.html";
+    }
+</script>
+</body>
+</html>
