@@ -86,7 +86,14 @@
     <div id="imageUI" style="display: none;">
         <h4 id="imageStatus" style="text-align: center; color: #1976d2; margin-bottom: 10px;"></h4>
         
-        <!-- Magic clean is now always automatic for B&W; no manual filter needed -->
+        <!-- Magic clean is automatic for B&W documents; customer can switch it off if not wanted -->
+        <div class="input-group" style="background: #e3f2fd; padding: 10px; border-radius: 6px; border: 1px solid #90caf9;">
+            <label style="color: #1565c0;">Auto Clean Filter (for B&amp;W documents):</label>
+            <select id="autoCleanToggle">
+                <option value="on" selected>On (Recommended)</option>
+                <option value="off">Off - No Filter</option>
+            </select>
+        </div>
 
         <div id="cropAreaWrapper">
             <p style="font-size: 13px; color: #555; text-align: center;">Drag corners to crop your document perfectly.</p>
@@ -667,38 +674,43 @@ async function saveCropAndNext() {
             dest = new cv.Mat();
             cv.warpPerspective(src, dest, M, new cv.Size(targetW, targetH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
+            let autoCleanEnabled = document.getElementById("autoCleanToggle") ? document.getElementById("autoCleanToggle").value === "on" : true;
+
             if (printType == "5") {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
-                // Detect whether this looks like a document/marksheet (mostly flat white
-                // paper background + sparse dark ink) vs a regular photo (continuous
-                // mid-tone shading/gradients from lighting, product shots, faces, etc.),
-                // so we only auto-clean documents and leave normal photos untouched.
-                let whiteMat = new cv.Mat();
-                let darkMat = new cv.Mat();
-                cv.threshold(dest, whiteMat, 225, 255, cv.THRESH_BINARY);
-                cv.threshold(dest, darkMat, 60, 255, cv.THRESH_BINARY_INV);
-                let totalPixels = dest.rows * dest.cols;
-                let whitePercentage = (cv.countNonZero(whiteMat) / totalPixels) * 100;
-                let darkPercentage = (cv.countNonZero(darkMat) / totalPixels) * 100;
-                let midtonePercentage = 100 - whitePercentage - darkPercentage;
-                whiteMat.delete();
-                darkMat.delete();
+                if (autoCleanEnabled) {
+                    // Detect whether this looks like a document/marksheet (mostly flat white
+                    // paper background + sparse dark ink) vs a regular photo (continuous
+                    // mid-tone shading/gradients from lighting, product shots, faces, etc.),
+                    // so we only auto-clean documents and leave normal photos untouched.
+                    let whiteMat = new cv.Mat();
+                    let darkMat = new cv.Mat();
+                    cv.threshold(dest, whiteMat, 225, 255, cv.THRESH_BINARY);
+                    cv.threshold(dest, darkMat, 60, 255, cv.THRESH_BINARY_INV);
+                    let totalPixels = dest.rows * dest.cols;
+                    let whitePercentage = (cv.countNonZero(whiteMat) / totalPixels) * 100;
+                    let darkPercentage = (cv.countNonZero(darkMat) / totalPixels) * 100;
+                    let midtonePercentage = 100 - whitePercentage - darkPercentage;
+                    whiteMat.delete();
+                    darkMat.delete();
 
-                const looksLikeDocument = whitePercentage > 30 && midtonePercentage < 25;
+                    const looksLikeDocument = whitePercentage > 30 && midtonePercentage < 25;
 
-                if (looksLikeDocument) {
-                    // Document / marksheet with dirty or uneven background -> auto clean
-                    bg = new cv.Mat();
-                    cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
-                    diffMat = new cv.Mat();
-                    cv.absdiff(dest, bg, diffMat);
-                    cv.bitwise_not(diffMat, diffMat);
-                    // Cap the ceiling below pure 255 so the background doesn't get stretched
-                    // into blown-out white — this is the actual whiteness control.
-                    cv.normalize(diffMat, dest, 20, 205, cv.NORM_MINMAX);
+                    if (looksLikeDocument) {
+                        // Document / marksheet with dirty or uneven background -> auto clean
+                        bg = new cv.Mat();
+                        cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
+                        diffMat = new cv.Mat();
+                        cv.absdiff(dest, bg, diffMat);
+                        cv.bitwise_not(diffMat, diffMat);
+                        // Cap the ceiling below pure 255 so the background doesn't get stretched
+                        // into blown-out white — this is the actual whiteness control.
+                        cv.normalize(diffMat, dest, 20, 205, cv.NORM_MINMAX);
+                    }
+                    // else: looks like a regular photo — leave as plain grayscale, no other edits
                 }
-                // else: looks like a regular photo — leave as plain grayscale, no other edits
+                // if autoCleanEnabled is false, leave as plain grayscale — no detection, no cleanup
             } else {
                 // Color images: leave untouched, just ensure correct color space
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
