@@ -367,15 +367,42 @@ function tryAutoDetectCorners(side, attempt) {
     }, 30);
 }
 
+// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
+// to match the winding order expected by projectPerspective()
+function orderCornersClockwise(pts) {
+    const sums = pts.map(p => p.x + p.y);
+    const diffs = pts.map(p => p.x - p.y);
+    const tl = pts[sums.indexOf(Math.min(...sums))];
+    const br = pts[sums.indexOf(Math.max(...sums))];
+    const tr = pts[diffs.indexOf(Math.max(...diffs))];
+    const bl = pts[diffs.indexOf(Math.min(...diffs))];
+    return [tl, tr, br, bl];
+}
+
+// Improved corner detection:
+//  - bilateralFilter instead of GaussianBlur: smooths busy/textured backgrounds
+//    (wood, stone, fabric) while preserving the card's actual edges
+//  - adaptive Canny thresholds based on image brightness, instead of fixed 30/100
+//  - RETR_LIST instead of RETR_EXTERNAL: still finds the card contour even if
+//    it's nested inside a larger background contour
+//  - scores candidate quads by area + rectangularity + how close their
+//    aspect ratio is to a real ID card (856:540 ≈ 1.586), instead of just
+//    picking the single largest 4-point contour
 function autoDetectCorners(side) {
     const s = engine[side];
     const w = s.canvas.width;
     const h = s.canvas.height;
     const canvasArea = w * h;
+    const TARGET_RATIO = 856 / 540; // ID card aspect ratio ~1.586
 
     let src, gray, blurred, edged, dilated, kernel, contours, hierarchy;
     let bestQuad = null;
-    let bestArea = 0;
+    let bestScore = -1;
+
+    function quadSideLengths(pts) {
+        const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+        return [d(pts[0], pts[1]), d(pts[1], pts[2]), d(pts[2], pts[3]), d(pts[3], pts[0])];
+    }
 
     try {
         // Render the (un-zoomed) image at canvas resolution so coordinates line up with s.corners
@@ -388,11 +415,18 @@ function autoDetectCorners(side) {
         gray = new cv.Mat();
         cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
+        // Stronger, edge-preserving smoothing to suppress busy/textured backgrounds
         blurred = new cv.Mat();
-        cv.GaussianBlur(gray, blurred, new cv.Size(5, 5), 0);
+        cv.bilateralFilter(gray, blurred, 9, 75, 75);
+
+        // Adaptive Canny thresholds based on mean intensity (auto-canny technique),
+        // instead of a fixed 30/100 that only works for some lighting conditions
+        const meanVal = cv.mean(blurred)[0];
+        const lower = Math.max(0, 0.66 * meanVal);
+        const upper = Math.min(255, 1.33 * meanVal);
 
         edged = new cv.Mat();
-        cv.Canny(blurred, edged, 30, 100);
+        cv.Canny(blurred, edged, lower, upper);
 
         // Close small gaps in the card outline so it forms one continuous contour
         kernel = cv.Mat.ones(5, 5, cv.CV_8U);
@@ -401,7 +435,7 @@ function autoDetectCorners(side) {
 
         contours = new cv.MatVector();
         hierarchy = new cv.Mat();
-        cv.findContours(dilated, contours, hierarchy, cv.RETR_EXTERNAL, cv.CHAIN_APPROX_SIMPLE);
+        cv.findContours(dilated, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
 
         // Card can be a small part of the frame (lots of background/table visible), but
         // shouldn't be near-zero (noise) or the entire frame (a false "whole image" contour)
@@ -428,10 +462,32 @@ function autoDetectCorners(side) {
             }
 
             if (quad) {
-                if (area > bestArea) {
-                    if (bestQuad) bestQuad.delete();
-                    bestQuad = quad;
-                    bestArea = area;
+                const pts = [];
+                for (let j = 0; j < 4; j++) pts.push({ x: quad.intPtr(j, 0)[0], y: quad.intPtr(j, 0)[1] });
+                const ordered = orderCornersClockwise(pts);
+                const sides = quadSideLengths(ordered);
+                const wAvg = (sides[0] + sides[2]) / 2; // avg of top/bottom edges
+                const hAvg = (sides[1] + sides[3]) / 2; // avg of left/right edges
+                const ratio = Math.max(wAvg, hAvg) / Math.max(1, Math.min(wAvg, hAvg));
+
+                // Rectangularity: how close the contour area is to its bounding-box area
+                // (rejects thin slivers / non-rectangular blobs that happen to approx to 4 points)
+                const rect = cv.boundingRect(cnt);
+                const rectangularity = area / Math.max(1, (rect.width * rect.height));
+
+                // How close the ratio is to a real ID card (0 = perfect match)
+                const ratioError = Math.abs(ratio - TARGET_RATIO) / TARGET_RATIO;
+
+                // Reject candidates that don't look card-shaped at all, even if large
+                if (ratioError < 0.4 && rectangularity > 0.7) {
+                    const score = area * rectangularity * (1 - ratioError);
+                    if (score > bestScore) {
+                        if (bestQuad) bestQuad.delete();
+                        bestQuad = quad;
+                        bestScore = score;
+                    } else {
+                        quad.delete();
+                    }
                 } else {
                     quad.delete();
                 }
@@ -460,18 +516,6 @@ function autoDetectCorners(side) {
             if (m && typeof m.delete === 'function') m.delete();
         });
     }
-}
-
-// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
-// to match the winding order expected by projectPerspective()
-function orderCornersClockwise(pts) {
-    const sums = pts.map(p => p.x + p.y);
-    const diffs = pts.map(p => p.x - p.y);
-    const tl = pts[sums.indexOf(Math.min(...sums))];
-    const br = pts[sums.indexOf(Math.max(...sums))];
-    const tr = pts[diffs.indexOf(Math.max(...diffs))];
-    const bl = pts[diffs.indexOf(Math.min(...diffs))];
-    return [tl, tr, br, bl];
 }
 
 function resetZoom(side) {
