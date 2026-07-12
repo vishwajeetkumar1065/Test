@@ -680,7 +680,7 @@ async function saveCropAndNext() {
                 cv.bitwise_not(diffMat, diffMat);
                 cv.normalize(diffMat, dest, 0, 255, cv.NORM_MINMAX);
 
-                cv.convertScaleAbs(dest, dest, 1.5, -60); // push background to white, darken text
+                cv.convertScaleAbs(dest, dest, 1.15, -20); // gentler push — less blown-out white background
             } else {
                 // Color images: leave untouched, just ensure correct color space
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
@@ -731,7 +731,7 @@ async function convertToA4(sourceCanvas) {
         }
         
         if (document.getElementById("type").value == 5 && typeof cv === 'undefined') {
-            ctx.filter = 'grayscale(100%) contrast(115%) brightness(105%)';
+            ctx.filter = 'grayscale(100%) contrast(108%) brightness(102%)';
         }
 
         ctx.drawImage(drawCanvas, 0, 0, a4.width, a4.height); 
