@@ -86,15 +86,7 @@
     <div id="imageUI" style="display: none;">
         <h4 id="imageStatus" style="text-align: center; color: #1976d2; margin-bottom: 10px;"></h4>
         
-        <!-- 🚀 HIDDEN: Magic Clean Filter (AI background me check karega) -->
-        <div class="input-group" style="display: none !important;">
-            <label style="color: #2e7d32;">✨ Magic Image Filter:</label>
-            <select id="imageFilter" style="border: 2px solid #4caf50; font-weight: bold;">
-                <option value="clean">Clean Document (Marksheet/Aadhaar ke liye)</option>
-                <option value="normal">Normal (WhatsApp Chats/Photos ke liye)</option>
-            </select>
-            <p id="autoDetectMsg"></p> <!-- Safe guard for JS -->
-        </div>
+        <!-- Magic clean is now always automatic for B&W; no manual filter needed -->
 
         <div id="cropAreaWrapper">
             <p style="font-size: 13px; color: #555; text-align: center;">Drag corners to crop your document perfectly.</p>
@@ -447,43 +439,6 @@ function loadCurrentImageForCrop() {
 
             if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
                 // ========================================================
-                // 🚀 SMART AI WHITENESS DETECTOR (PRO LEVEL)
-                // ========================================================
-                try {
-                    let tempCanvas = document.createElement('canvas');
-                    tempCanvas.width = w; tempCanvas.height = h;
-                    tempCanvas.getContext('2d').drawImage(img, 0, 0, w, h);
-
-                    let whitenessSrc = cv.imread(tempCanvas);
-                    let whitenessGray = new cv.Mat();
-                    cv.cvtColor(whitenessSrc, whitenessGray, cv.COLOR_RGBA2GRAY, 0);
-
-                    let thresh = new cv.Mat();
-                    cv.threshold(whitenessGray, thresh, 190, 255, cv.THRESH_BINARY);
-
-                    let whitePixelCount = cv.countNonZero(thresh);
-                    let totalPixels = whitenessGray.rows * whitenessGray.cols;
-                    let whitenessPercentage = (whitePixelCount / totalPixels) * 100;
-
-                    let filterDropdown = document.getElementById("imageFilter");
-                    let autoMsg = document.getElementById("autoDetectMsg");
-
-                    if (filterDropdown && autoMsg) {
-                        if (whitenessPercentage > 35) {
-                            filterDropdown.value = "clean";
-                            autoMsg.innerHTML = `🤖 <b>Auto-Detect:</b> White Paper Detected (<b>${Math.round(whitenessPercentage)}% Whiteness</b>). Set to Clean.`;
-                        } else {
-                            filterDropdown.value = "normal";
-                            autoMsg.innerHTML = `🤖 <b>Auto-Detect:</b> Photo/Screenshot Detected (<b>${Math.round(whitenessPercentage)}% Whiteness</b>). Set to Normal.`;
-                        }
-                    }
-
-                    whitenessSrc.delete(); whitenessGray.delete(); thresh.delete();
-                } catch (err) {
-                    console.warn("Whiteness detect fail hua.", err);
-                }
-
-                // ========================================================
                 // 🔍 ROBUST CORNER AUTO-DETECT (multi-strategy)
                 // ========================================================
                 if (detectStatusEl) {
@@ -690,8 +645,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let filterType = document.getElementById("imageFilter").value; // 🚀 MAGIC FILTER CHOICE (Auto selected in background)
-        let src, dest, srcTri, dstTri, M;
+        let src, dest, srcTri, dstTri, M, bg, diffMat;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -714,19 +668,22 @@ async function saveCropAndNext() {
             cv.warpPerspective(src, dest, M, new cv.Size(targetW, targetH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
             if (printType == "5") {
-                if (filterType === "clean") {
-                    cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
-                    
-                    cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
-                    cv.convertScaleAbs(dest, dest, 1.4, -40); 
-                    
-                } else {
-                    cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
-                    cv.convertScaleAbs(dest, dest, 1.1, 0); 
-                }
+                // 🚀 AUTO CLEAN (always on for B&W): flattens uneven lighting/shadows so the
+                // page background becomes pure white and the text becomes dark/highlighted,
+                // without needing a manual filter choice.
+                cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
+
+                bg = new cv.Mat();
+                cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
+                diffMat = new cv.Mat();
+                cv.absdiff(dest, bg, diffMat);
+                cv.bitwise_not(diffMat, diffMat);
+                cv.normalize(diffMat, dest, 0, 255, cv.NORM_MINMAX);
+
+                cv.convertScaleAbs(dest, dest, 1.5, -60); // push background to white, darken text
             } else {
+                // Color images: leave untouched, just ensure correct color space
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
-                cv.convertScaleAbs(dest, dest, 1.05, 5); 
             }
 
             cv.imshow(hCvs, dest);
@@ -736,6 +693,7 @@ async function saveCropAndNext() {
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
+            if (bg) bg.delete(); if (diffMat) diffMat.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
@@ -773,12 +731,7 @@ async function convertToA4(sourceCanvas) {
         }
         
         if (document.getElementById("type").value == 5 && typeof cv === 'undefined') {
-            let filterType = document.getElementById("imageFilter") ? document.getElementById("imageFilter").value : "normal";
-            if (filterType === "clean") {
-                ctx.filter = 'grayscale(100%) contrast(115%) brightness(105%)'; 
-            } else {
-                ctx.filter = 'grayscale(100%) contrast(110%)'; 
-            }
+            ctx.filter = 'grayscale(100%) contrast(115%) brightness(105%)';
         }
 
         ctx.drawImage(drawCanvas, 0, 0, a4.width, a4.height); 
