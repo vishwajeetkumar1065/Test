@@ -668,19 +668,30 @@ async function saveCropAndNext() {
             cv.warpPerspective(src, dest, M, new cv.Size(targetW, targetH), cv.INTER_LINEAR, cv.BORDER_CONSTANT, new cv.Scalar());
 
             if (printType == "5") {
-                // 🚀 AUTO CLEAN (always on for B&W): flattens uneven lighting/shadows so the
-                // page background becomes pure white and the text becomes dark/highlighted,
-                // without needing a manual filter choice.
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
-                bg = new cv.Mat();
-                cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
-                diffMat = new cv.Mat();
-                cv.absdiff(dest, bg, diffMat);
-                cv.bitwise_not(diffMat, diffMat);
-                cv.normalize(diffMat, dest, 0, 255, cv.NORM_MINMAX);
+                // Detect whether this looks like a document/marksheet (mostly white
+                // paper background) vs a regular photo, so we only auto-clean documents
+                // and leave normal photos completely untouched.
+                let threshMat = new cv.Mat();
+                cv.threshold(dest, threshMat, 190, 255, cv.THRESH_BINARY);
+                let whitePixelCount = cv.countNonZero(threshMat);
+                let totalPixels = dest.rows * dest.cols;
+                let whitenessPercentage = (whitePixelCount / totalPixels) * 100;
+                threshMat.delete();
 
-                cv.convertScaleAbs(dest, dest, 1.15, -20); // gentler push — less blown-out white background
+                if (whitenessPercentage > 35) {
+                    // Document / marksheet with dirty or uneven background -> auto clean
+                    bg = new cv.Mat();
+                    cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
+                    diffMat = new cv.Mat();
+                    cv.absdiff(dest, bg, diffMat);
+                    cv.bitwise_not(diffMat, diffMat);
+                    // Cap the ceiling below pure 255 so the background doesn't get stretched
+                    // into blown-out white — this is the actual whiteness control.
+                    cv.normalize(diffMat, dest, 20, 205, cv.NORM_MINMAX);
+                }
+                // else: looks like a regular photo — leave as plain grayscale, no other edits
             } else {
                 // Color images: leave untouched, just ensure correct color space
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
@@ -731,7 +742,7 @@ async function convertToA4(sourceCanvas) {
         }
         
         if (document.getElementById("type").value == 5 && typeof cv === 'undefined') {
-            ctx.filter = 'grayscale(100%) contrast(108%) brightness(102%)';
+            ctx.filter = 'grayscale(100%)';
         }
 
         ctx.drawImage(drawCanvas, 0, 0, a4.width, a4.height); 
