@@ -380,16 +380,28 @@ function orderCornersClockwise(pts) {
 //    picking the single largest 4-point contour
 function autoDetectCorners(side) {
     const s = engine[side];
-    const w = s.canvas.width;
-    const h = s.canvas.height;
-    const canvasArea = w * h;
+    const dispW = s.canvas.width;
+    const dispH = s.canvas.height;
     const TARGET_RATIO = 856 / 540; // PAN card aspect ratio ~1.586
 
+    // 🎯 ACCURACY UPGRADE 1 — detect at higher resolution than the display
+    // canvas, then scale the found corners back down. The on-screen canvas
+    // is only 400px wide (kept small for smooth dragging); that's not
+    // enough resolution for the contour/corner math to land precisely on
+    // the card's real edge, especially on higher-res phone photos.
+    const nativeW = s.img.naturalWidth || s.img.width || dispW;
+    const DETECT_W = Math.min(1100, Math.max(dispW, nativeW));
+    const scale = DETECT_W / dispW;
+    const w = DETECT_W;
+    const h = Math.round(dispH * scale);
+    const canvasArea = w * h;
+
     let src, gray, blurred, kernel;
-    let bestQuad = null;
-    let bestScore = -1;
-    let candidatesSeen = 0;
-    let candidatesRejected = { size: 0, shape: 0, error: 0 };
+    const candidates = [];
+    let rejectedForSize = 0;
+
+    const cx = w / 2, cy = h / 2;
+    const maxCenterDist = Math.hypot(cx, cy);
 
     function quadSideLengths(pts) {
         const d = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
@@ -414,24 +426,25 @@ function autoDetectCorners(side) {
         const angleRad = (rect.angle * Math.PI) / 180;
         const cos = Math.cos(angleRad), sin = Math.sin(angleRad);
         const w2 = rect.size.width / 2, h2 = rect.size.height / 2;
-        const cx = rect.center.x, cy = rect.center.y;
+        const rcx = rect.center.x, rcy = rect.center.y;
         return [
             { x: -w2, y: -h2 }, { x: w2, y: -h2 }, { x: w2, y: h2 }, { x: -w2, y: h2 }
         ].map(p => ({
-            x: cx + p.x * cos - p.y * sin,
-            y: cy + p.x * sin + p.y * cos
+            x: rcx + p.x * cos - p.y * sin,
+            y: rcy + p.x * sin + p.y * cos
         }));
     }
 
     // Card can be a small part of the frame, but shouldn't be near-zero (noise)
     // or the entire frame (a false "whole image" contour)
-    const minArea = canvasArea * 0.02;
+    const minArea = canvasArea * 0.03;
     const maxArea = canvasArea * 0.95;
 
-    // Evaluates every contour in a given binary/edge Mat against the scoring
-    // criteria, updating bestQuad/bestScore as it goes. Isolated per-contour
-    // try/catch so one bad candidate can't abort the whole detection pass.
-    function scanContours(binaryMat, label) {
+    // 🎯 ACCURACY UPGRADE 2 — collect every plausible quad ONCE across all
+    // masks (instead of accept/reject inline against one fixed tolerance).
+    // Selection tolerance is applied afterwards in tiers (see below), so
+    // the actual CV work (findContours/approxPolyDP/etc.) isn't repeated.
+    function collectCandidates(binaryMat, label) {
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
         cv.findContours(binaryMat, contours, hierarchy, cv.RETR_LIST, cv.CHAIN_APPROX_SIMPLE);
@@ -441,8 +454,7 @@ function autoDetectCorners(side) {
             let hull = null;
             try {
                 const area = cv.contourArea(cnt);
-                if (area < minArea || area > maxArea) { candidatesRejected.size++; continue; }
-                candidatesSeen++;
+                if (area < minArea || area > maxArea) { rejectedForSize++; continue; }
 
                 hull = new cv.Mat();
                 cv.convexHull(cnt, hull);
@@ -470,19 +482,12 @@ function autoDetectCorners(side) {
 
                 const rect = cv.boundingRect(cnt);
                 const rectangularity = area / Math.max(1, (rect.width * rect.height));
-                const { ordered, ratioError } = evaluateCandidate(quadPts);
+                const { ordered, ratioError, area: quadArea } = evaluateCandidate(quadPts);
+                const centroidX = (ordered[0].x + ordered[1].x + ordered[2].x + ordered[3].x) / 4;
+                const centroidY = (ordered[0].y + ordered[1].y + ordered[2].y + ordered[3].y) / 4;
 
-                if (ratioError < 0.6 && rectangularity > 0.5) {
-                    const score = area * rectangularity * (1 - ratioError);
-                    if (score > bestScore) {
-                        bestQuad = ordered;
-                        bestScore = score;
-                    }
-                } else {
-                    candidatesRejected.shape++;
-                }
+                candidates.push({ ordered, ratioError, rectangularity, area: quadArea, centroidX, centroidY, label });
             } catch (candidateErr) {
-                candidatesRejected.error++;
                 console.warn(`[autoDetect/${side}] candidate from ${label} threw:`, candidateErr);
             } finally {
                 if (hull) hull.delete();
@@ -492,6 +497,9 @@ function autoDetectCorners(side) {
         contours.delete();
         hierarchy.delete();
     }
+
+    let bestQuad = null;
+    let usedTierLabel = "";
 
     try {
         const tempCanvas = document.createElement('canvas');
@@ -518,7 +526,7 @@ function autoDetectCorners(side) {
             let dilated = new cv.Mat();
             cv.Canny(blurred, edged, lower, upper);
             cv.dilate(edged, dilated, kernel, new cv.Point(-1, -1), 2);
-            scanContours(dilated, `canny(${loMult},${hiMult})`);
+            collectCandidates(dilated, `canny(${loMult},${hiMult})`);
             edged.delete();
             dilated.delete();
         }
@@ -528,19 +536,70 @@ function autoDetectCorners(side) {
         // blob far more reliably than edge detection does on textured surfaces.
         let otsu = new cv.Mat();
         cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
-        scanContours(otsu, "otsu-bright");
+        collectCandidates(otsu, "otsu-bright");
         otsu.delete();
 
         // Strategy C: inverse Otsu, in case the card is darker than its background
         let otsuInv = new cv.Mat();
         cv.threshold(blurred, otsuInv, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-        scanContours(otsuInv, "otsu-dark");
+        collectCandidates(otsuInv, "otsu-dark");
         otsuInv.delete();
 
-        console.log(`[autoDetect/${side}] candidates evaluated: ${candidatesSeen}, rejected(size/shape/error): ${candidatesRejected.size}/${candidatesRejected.shape}/${candidatesRejected.error}, bestScore: ${bestScore}`);
+        // 🎯 ACCURACY UPGRADE 3 — strict-to-loose tier cascade. A tight,
+        // clean quad that closely matches the card's real aspect ratio
+        // wins over a big loose one, even if the loose one scores higher
+        // on raw area. We only fall back to a looser tier if literally
+        // nothing clean was found at that tier.
+        const tiers = [
+            { ratioTol: 0.12, rectTol: 0.88, label: "strict" },
+            { ratioTol: 0.25, rectTol: 0.75, label: "medium" },
+            { ratioTol: 0.6,  rectTol: 0.5,  label: "loose"  },
+        ];
+
+        for (const tier of tiers) {
+            let localBest = null;
+            let localBestScore = -1;
+            for (const c of candidates) {
+                if (c.ratioError >= tier.ratioTol || c.rectangularity <= tier.rectTol) continue;
+                // 🎯 ACCURACY UPGRADE 3b — central bias: the card is almost
+                // always the thing the user deliberately framed in the
+                // middle of the shot, so prefer centrally-placed candidates
+                // over stray background shapes that also happen to pass
+                // the ratio/rectangularity bar.
+                const centerDist = Math.hypot(c.centroidX - cx, c.centroidY - cy) / maxCenterDist;
+                const centerBias = 1 - Math.min(1, centerDist) * 0.35;
+                const score = c.area * c.rectangularity * (1 - c.ratioError) * centerBias;
+                if (score > localBestScore) {
+                    localBestScore = score;
+                    localBest = c.ordered;
+                }
+            }
+            if (localBest) {
+                bestQuad = localBest;
+                usedTierLabel = tier.label;
+                break;
+            }
+        }
+
+        console.log(`[autoDetect/${side}] candidates: ${candidates.length}, rejected(size): ${rejectedForSize}, tier used: ${usedTierLabel || "none"}`);
 
         if (bestQuad) {
-            s.corners = bestQuad;
+            // 🎯 ACCURACY UPGRADE 4 — sub-pixel corner refinement. The
+            // polygon-approximation corners above are accurate to a few
+            // pixels at best; cornerSubPix nudges each one to the true
+            // local gradient intersection, visibly tightening the crop
+            // right at the card boundary. Best-effort: some opencv.js
+            // builds omit this binding, so failures are silently ignored
+            // and the un-refined quad is kept.
+            try {
+                bestQuad = refineCornersSubPixel(gray, bestQuad);
+            } catch (refineErr) {
+                console.warn(`[autoDetect/${side}] sub-pixel refine skipped:`, refineErr);
+            }
+
+            // Scale the detected corners back down from detection
+            // resolution to the display canvas's coordinate space.
+            s.corners = bestQuad.map(p => ({ x: p.x / scale, y: p.y / scale }));
             return true;
         }
         return false;
@@ -552,6 +611,27 @@ function autoDetectCorners(side) {
             if (m && typeof m.delete === 'function') m.delete();
         });
     }
+}
+
+// Nudges each corner of an approximate quad to the true local edge/gradient
+// intersection using OpenCV's iterative sub-pixel corner refinement.
+// Operates on the same grayscale Mat used for detection (pre-scale-down).
+function refineCornersSubPixel(grayMat, quad) {
+    let cornersMat = new cv.Mat(4, 1, cv.CV_32FC2);
+    for (let i = 0; i < 4; i++) {
+        cornersMat.data32F[i * 2] = quad[i].x;
+        cornersMat.data32F[i * 2 + 1] = quad[i].y;
+    }
+    const winSize = new cv.Size(5, 5);
+    const zeroZone = new cv.Size(-1, -1);
+    const criteria = new cv.TermCriteria(cv.TERM_CRITERIA_EPS + cv.TERM_CRITERIA_MAX_ITER, 40, 0.001);
+    cv.cornerSubPix(grayMat, cornersMat, winSize, zeroZone, criteria);
+    const refined = [];
+    for (let i = 0; i < 4; i++) {
+        refined.push({ x: cornersMat.data32F[i * 2], y: cornersMat.data32F[i * 2 + 1] });
+    }
+    cornersMat.delete();
+    return refined;
 }
 
 function resetZoom(side) {
