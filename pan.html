@@ -112,6 +112,7 @@
             margin: 15px auto;
             text-align: center;
             display: none;
+            scroll-margin-top: 20px;
         }
         .side-preview img {
             width: 180px;
@@ -506,6 +507,7 @@ function enhanceCroppedImageOnBrowser(canvasElement) {
     return canvasElement;
 }
 
+// 🚀 FIXED: Auto-scroll so the saved preview lands at the top of the viewport
 function saveSide(side) {
     const s = engine[side];
     if (!s.img) { alert(`Choose an image for ${side} first.`); return; }
@@ -523,14 +525,22 @@ function saveSide(side) {
         
         const croppedDataUrl = resultCanvas.toDataURL("image/jpeg", 0.90);
         
+        const previewContainer = document.getElementById(`${side}PreviewContainer`);
         document.getElementById(`${side}PreviewImg`).src = croppedDataUrl;
-        document.getElementById(`${side}PreviewContainer`).style.display = "block";
+        previewContainer.style.display = "block";
         applyLiveGrayscalePreviewFilter();
 
         if (side === 'front') frontDataUrl = croppedDataUrl;
         
         if(mainSaveBtn) mainSaveBtn.innerText = "Save Card";
         if(fullSaveBtn) fullSaveBtn.innerText = "Save Card";
+
+        // 📜 Auto-scroll so the freshly saved preview appears at the top of the screen.
+        // requestAnimationFrame ensures display:"block" has been painted first,
+        // so the browser measures the container's real position before scrolling.
+        requestAnimationFrame(() => {
+            previewContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        });
     }, 50);
 }
 
