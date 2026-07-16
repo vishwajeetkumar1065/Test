@@ -33,11 +33,6 @@
 
         .status { color: #f9e2af; font-weight: bold; margin-bottom: 15px; display: none; }
 
-        /* Fine-tuning controls */
-        .controls { display: none; background: #181825; padding: 15px; border-radius: 8px; margin-bottom: 20px; text-align: left; border: 1px dashed #585b70; }
-        .controls label { font-size: 13px; color: #bac2de; font-weight: bold; display: block; margin-bottom: 5px; }
-        .controls input[type="range"] { width: 100%; margin-bottom: 10px; accent-color: #89b4fa; }
-
         /* Preview Area */
         .preview-wrapper { background: white; padding: 10px; border-radius: 4px; overflow: auto; max-height: 500px; display: none; }
         #printCanvas { max-width: 100%; border: 1px solid #ccc; box-shadow: 0 0 10px rgba(0,0,0,0.1); }
@@ -56,12 +51,12 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Upload PDF, enter password, and let the system arrange it for A4 Glossy Print.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Upload PDF, enter password, and print exactly to standard format.</p>
 
     <div class="input-group">
         <label class="upload-btn">
             📂 1. Select E-Aadhar PDF
-            <input type="file" id="fileInput" accept="application/pdf, image/*">
+            <input type="file" id="fileInput" accept="application/pdf">
         </label>
         <input type="text" id="pdfPassword" placeholder="PDF Password (e.g. KHUS2003)">
     </div>
@@ -69,15 +64,6 @@
     <div id="statusText" class="status">🔄 Processing... Please wait.</div>
 
     <button id="processBtn" class="action-btn" onclick="processAadhar()">✂️ 2. Auto-Crop & Arrange</button>
-
-    <div class="controls" id="adjustControls">
-        <p style="color: #f38ba8; margin-top: 0; font-size: 14px; font-weight: bold;">🎛️ Alignment Fixer (If cut is slightly off)</p>
-        <label>Crop Height Move (Up/Down)</label>
-        <input type="range" id="yOffset" min="-100" max="100" value="0" oninput="drawFinalA4()">
-        
-        <label>Crop Zoom (Bada/Chhota)</label>
-        <input type="range" id="zoom" min="0.8" max="1.2" step="0.01" value="1" oninput="drawFinalA4()">
-    </div>
 
     <button id="printBtn" class="action-btn print-btn" onclick="window.print()">🖨️ 3. Print on A4 Glossy Paper</button>
 
@@ -96,7 +82,6 @@
     const statusText = document.getElementById('statusText');
     const previewArea = document.getElementById('previewArea');
     const printBtn = document.getElementById('printBtn');
-    const adjustControls = document.getElementById('adjustControls');
     
     // A4 Standard Dimensions (300 DPI)
     const A4_WIDTH = 2480;
@@ -107,7 +92,7 @@
     async function processAadhar() {
         const file = fileInput.files[0];
         if (!file) {
-            alert("Please select an E-Aadhar PDF or Image first!");
+            alert("Please select an E-Aadhar PDF first!");
             return;
         }
 
@@ -117,10 +102,8 @@
         try {
             if (file.type === "application/pdf") {
                 await loadPDF(file);
-            } else if (file.type.startsWith("image/")) {
-                await loadImage(file);
             } else {
-                throw new Error("Invalid file type. Please upload a PDF or Image.");
+                throw new Error("Invalid file type. Please upload the E-Aadhar PDF.");
             }
             
             // Once loaded into the hidden canvas, draw it to the A4 canvas
@@ -129,8 +112,7 @@
             statusText.style.display = "none";
             previewArea.style.display = "block";
             printBtn.style.display = "block";
-            adjustControls.style.display = "block";
-            processBtn.innerText = "✓ Successfully Arranged!";
+            processBtn.innerText = "✓ Perfect Auto-Crop Applied!";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -156,7 +138,7 @@
                     // Always read the first page of E-Aadhar
                     const page = await pdf.getPage(1);
                     
-                    // Render at high resolution (Scale 3.0 gives excellent print quality)
+                    // Render at high resolution (Scale 4.0 gives excellent print quality)
                     const scale = 4.0; 
                     const viewport = page.getViewport({ scale: scale });
                     
@@ -174,24 +156,6 @@
         });
     }
 
-    async function loadImage(file) {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onload = function(e) {
-                const img = new Image();
-                img.onload = function() {
-                    rawImageCanvas.width = img.width;
-                    rawImageCanvas.height = img.height;
-                    rawCtx.drawImage(img, 0, 0);
-                    resolve();
-                };
-                img.onerror = () => reject(new Error("Failed to load image."));
-                img.src = e.target.result;
-            };
-            reader.readAsDataURL(file);
-        });
-    }
-
     function drawFinalA4() {
         // Clear A4 Canvas and make it white
         printCtx.fillStyle = "#FFFFFF";
@@ -200,30 +164,23 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // User Adjustments
-        const yOffsetPerc = parseInt(document.getElementById('yOffset').value) / 1000; // Micro adjustments
-        const zoom = parseFloat(document.getElementById('zoom').value);
-
-        // Standard UIDAI E-Aadhar Proportions (Where the ID cards actually are on the page)
-        // These are calculated based on standard PDF layouts.
-        let cropY = rh * (0.665 + yOffsetPerc); 
-        let cropH = rh * 0.285 * zoom;
-        let cropW = rw * 0.44 * zoom;
+        // 🔥 PERFECTED EXACT UIDAI MATH - SLIDERS REMOVED 🔥
+        // Pushed Y down slightly to skip the scissor line completely and grab the red bottom border
+        let cropY = rh * 0.688; 
+        let cropH = rh * 0.280; // Perfect standard card height
+        let cropW = rw * 0.445; // Perfect standard card width
         
-        let frontCropX = rw * 0.04;
-        let backCropX = rw * 0.52;
+        let frontCropX = rw * 0.040; // Exact Left Margin
+        let backCropX = rw * 0.515;  // Exact Gap Margin
 
         // Where to paste on the A4 Paper (Top edge, side by side, leaving a small margin)
         const marginY = 150; // pixels from top
         const marginX = 150; // pixels from left edge
         
-        // Target Print Size for Aadhar (approx 85mm x 54mm) -> on 300 DPI that is roughly 1004 x 638 px
+        // Target Print Size for Aadhar (approx 85mm x 54mm) -> on 300 DPI that is exactly 1004 x 638 px
         const targetW = 1004;
         const targetH = 638;
         const gap = 80; // gap between front and back card
-
-        // Ensure we don't crop outside image bounds
-        cropH = Math.min(cropH, rh - cropY);
 
         try {
             // Draw Front Side
@@ -240,7 +197,7 @@
                 marginX + targetW + gap, marginY, targetW, targetH // Destination (Paste)
             );
 
-            // Draw smart cut-lines (dashed border around the cards)
+            // Draw smart cut-lines (dotted border around the cards)
             printCtx.strokeStyle = "#888888";
             printCtx.lineWidth = 3;
             printCtx.setLineDash([15, 15]);
