@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Zero Cutting. Zero Squishing.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Single Box For Easy Folding.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -74,7 +74,7 @@
 </div>
 
 <script>
-    let rawImageCanvas = document.createElement('canvas'); // Hidden canvas to store the full PDF page
+    let rawImageCanvas = document.createElement('canvas'); 
     let rawCtx = rawImageCanvas.getContext('2d');
     
     const fileInput = document.getElementById('fileInput');
@@ -111,7 +111,7 @@
             statusText.style.display = "none";
             previewArea.style.display = "block";
             printBtn.style.display = "block";
-            processBtn.innerText = "✓ Perfect Auto-Crop Applied!";
+            processBtn.innerText = "✓ Perfect Joint Crop Applied!";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -136,7 +136,6 @@
                     
                     const page = await pdf.getPage(1);
                     
-                    // High resolution render
                     const scale = 4.0; 
                     const viewport = page.getViewport({ scale: scale });
                     
@@ -163,44 +162,54 @@
         const rh = rawImageCanvas.height;
 
         // 🔥 THE ULTIMATE SWEET SPOT MATH (1mm Invisible Safe Zone) 🔥
-        let cropY = rh * 0.728; // Slightly up to save "Government of India"
-        let cropH = rh * 0.198; // Slightly taller to save the bottom red line fully
-        let cropW = rw * 0.430; // Slightly wider to save the right edge red box
+        let cropY = rh * 0.728; 
+        let cropH = rh * 0.198; 
+        let cropW = rw * 0.430; 
         
-        let frontCropX = rw * 0.039; // Moved left to save the vertical date text
-        let backCropX = rw * 0.522;  // Moved left to completely save "Address:"
+        let frontCropX = rw * 0.039; 
+        let backCropX = rw * 0.522;  
 
-        // Where to paste on the A4 Paper
-        const marginY = 150; 
-        const marginX = 150; 
-        const gap = 80; 
-
-        // Height adjusts dynamically so image never gets squeezed
+        // Size configuration
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
+        // 🔥 JOINT CARD ALIGNMENT (Perfectly Centered on A4) 🔥
+        // No gap between front and back. Placed exactly in the middle of A4.
+        const marginX = (A4_WIDTH - (targetW * 2)) / 2; // Auto-center
+        const marginY = 250; // Top padding
+
         try {
-            // Draw Front Side
+            // Draw Front Side (Left)
             printCtx.drawImage(
                 rawImageCanvas, 
                 frontCropX, cropY, cropW, cropH, 
                 marginX, marginY, targetW, targetH 
             );
 
-            // Draw Back Side
+            // Draw Back Side (Right) - Attached directly to Front!
             printCtx.drawImage(
                 rawImageCanvas, 
                 backCropX, cropY, cropW, cropH, 
-                marginX + targetW + gap, marginY, targetW, targetH 
+                marginX + targetW, marginY, targetW, targetH 
             );
 
-            // Draw precise cut-lines (dotted border)
+            // 🔥 Draw SINGLE OUTSIDE BOX (Cut Line) 🔥
             printCtx.strokeStyle = "#888888";
             printCtx.lineWidth = 3;
             printCtx.setLineDash([15, 15]);
-            printCtx.strokeRect(marginX, marginY, targetW, targetH);
-            printCtx.strokeRect(marginX + targetW + gap, marginY, targetW, targetH);
-            printCtx.setLineDash([]); 
+            // Multiply width by 2 to cover both cards in one single box
+            printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
+            
+            // 🔥 Draw FAINT FOLDING LINE (Center Line) 🔥
+            printCtx.strokeStyle = "#e0e0e0"; // Very light grey
+            printCtx.lineWidth = 2;
+            printCtx.setLineDash([5, 5]);
+            printCtx.beginPath();
+            printCtx.moveTo(marginX + targetW, marginY);
+            printCtx.lineTo(marginX + targetW, marginY + targetH);
+            printCtx.stroke();
+            
+            printCtx.setLineDash([]); // reset
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
