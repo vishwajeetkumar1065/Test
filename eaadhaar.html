@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Solid Black Rectangle For Easy Cutting.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Solid Black Rectangle. Perfect Top Logos.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -161,15 +161,15 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // Crop math
-        let cropY = rh * 0.728; 
-        let cropH = rh * 0.198; 
-        let cropW = rw * 0.430; 
+        // 🔥 THE EXACT MATH DERIVED FROM YOUR PDF ORIGINAL SIZE 🔥
+        let cropY = rh * 0.676; // Starts exactly below the scissor line 
+        let cropH = rh * 0.288; // Captures all the way down to the bottom border seamlessly
+        let cropW = rw * 0.455; // Covers exact card width edge-to-edge
         
-        let frontCropX = rw * 0.039; 
-        let backCropX = rw * 0.522;  
+        let frontCropX = rw * 0.035; // Perfect Left Margin
+        let backCropX = rw * 0.510;  // Perfect Right Start Margin
 
-        // Size configuration
+        // Size configuration (Calculates exact proportion to prevent any squeeze)
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
@@ -194,8 +194,8 @@
 
             // 🔥 Draw SOLID BLACK OUTSIDE BOX (Cut Line) 🔥
             printCtx.strokeStyle = "#000000"; // Solid Black
-            printCtx.lineWidth = 4; // Thicker line for clear visibility
-            printCtx.setLineDash([]); // Removes the dotted effect
+            printCtx.lineWidth = 4; // Thick line for bold printing 
+            printCtx.setLineDash([]); // Removes any dotted effect
             
             // Multiply width by 2 to cover both cards in one single solid box
             printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
@@ -212,6 +212,7 @@
             printCtx.font = "40px Arial";
             printCtx.textAlign = "center";
             printCtx.textBaseline = "middle";
+            printCtx.fillStyle = "#000000";
             printCtx.fillText("✂️", marginX + targetW, marginY - 25);
 
             // 📏 Rotated side label - RIGHT ("Details as on: today's date")
@@ -240,7 +241,7 @@
             printCtx.fillStyle = "#000000";
             printCtx.fillText(", मेरी पहचान", A4_WIDTH / 2 + 110, footerY);
 
-            // ☎️ Footer contact row - phone / email / website icons
+            // ☎️ Footer contact row - phone / email / website
             const contactY = footerY + 55;
             printCtx.font = "22px Arial";
             printCtx.fillStyle = "#000000";
