@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Solid Black Rectangle. Perfect Top Logos.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Clean Solid Box. No Extra Text.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -111,7 +111,7 @@
             statusText.style.display = "none";
             previewArea.style.display = "block";
             printBtn.style.display = "block";
-            processBtn.innerText = "✓ Perfect Joint Crop Applied!";
+            processBtn.innerText = "✓ Perfect Clean Crop Applied!";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -161,13 +161,15 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 THE EXACT MATH DERIVED FROM YOUR PDF ORIGINAL SIZE 🔥
-        let cropY = rh * 0.676; // Starts exactly below the scissor line 
-        let cropH = rh * 0.288; // Captures all the way down to the bottom border seamlessly
-        let cropW = rw * 0.455; // Covers exact card width edge-to-edge
+        // 🔥 PERFECTED CLEAN MATH 🔥
+        // 0.688 is the exact golden spot. It completely skips the text above the scissor line
+        // and starts exactly from the "Government of India" header.
+        let cropY = rh * 0.688; 
+        let cropH = rh * 0.285; // Captures all the way down to the bottom border seamlessly
+        let cropW = rw * 0.445; // Covers exact card width edge-to-edge
         
-        let frontCropX = rw * 0.035; // Perfect Left Margin
-        let backCropX = rw * 0.510;  // Perfect Right Start Margin
+        let frontCropX = rw * 0.038; // Perfect Left Margin
+        let backCropX = rw * 0.515;  // Perfect Right Start Margin
 
         // Size configuration (Calculates exact proportion to prevent any squeeze)
         const targetW = 1004;
@@ -208,45 +210,8 @@
             printCtx.stroke();
             printCtx.setLineDash([]);
 
-            // ✂️ Scissors icon at top of the fold line
-            printCtx.font = "40px Arial";
-            printCtx.textAlign = "center";
-            printCtx.textBaseline = "middle";
-            printCtx.fillStyle = "#000000";
-            printCtx.fillText("✂️", marginX + targetW, marginY - 25);
-
-            // 📏 Rotated side label - RIGHT ("Details as on: today's date")
-            const today = new Date();
-            const todayStr = String(today.getDate()).padStart(2, '0') + "/" +
-                              String(today.getMonth() + 1).padStart(2, '0') + "/" +
-                              today.getFullYear();
-            printCtx.save();
-            printCtx.translate(marginX + (targetW * 2) + 15, marginY + targetH);
-            printCtx.rotate(-Math.PI / 2);
-            printCtx.font = "bold 22px Arial";
-            printCtx.fillStyle = "#000000";
-            printCtx.textAlign = "left";
-            printCtx.textBaseline = "middle";
-            printCtx.fillText("Details as on: " + todayStr, 0, 0);
-            printCtx.restore();
-
-            // 🇮🇳 Footer tagline - "मेरा आधार, मेरी पहचान"
-            const footerY = marginY + targetH + 90;
-            printCtx.textAlign = "center";
-            printCtx.font = "bold 34px Arial";
-            printCtx.fillStyle = "#000000";
-            printCtx.fillText("मेरा ", A4_WIDTH / 2 - 60, footerY);
-            printCtx.fillStyle = "#e64553"; // red accent, like UIDAI branding
-            printCtx.fillText("आधार", A4_WIDTH / 2 - 5, footerY);
-            printCtx.fillStyle = "#000000";
-            printCtx.fillText(", मेरी पहचान", A4_WIDTH / 2 + 110, footerY);
-
-            // ☎️ Footer contact row - phone / email / website
-            const contactY = footerY + 55;
-            printCtx.font = "22px Arial";
-            printCtx.fillStyle = "#000000";
-            printCtx.textAlign = "center";
-            printCtx.fillText("📞 1947    ✉️ help@uidai.gov.in    🌐 www.uidai.gov.in", A4_WIDTH / 2, contactY);
+            // SAB KUCH BAAHAR KA (EXTRA TEXT) DELETE KAR DIYA GAYA HAI!
+            // Sirf ek clean box print hoga.
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
