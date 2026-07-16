@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. No adjustments needed.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Retrieves Top Logos properly without squishing.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -163,22 +163,23 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 100% EXACT HARDCODED MATH - NO SLIDERS 🔥
-        // These coordinates target the EXACT millimeter positioning of a standard UIDAI PDF
-        let cropY = rh * 0.764; // Bypasses scissor line completely, starts exactly at top red border
-        let cropH = rh * 0.186; // Perfect card height (approx 55mm)
-        let cropW = rw * 0.415; // Perfect card width (approx 85mm)
-        
-        let frontCropX = rw * 0.044; // Exact Left Margin
-        let backCropX = rw * 0.520;  // Exact Right Card Margin
-
-        // Where to paste on the A4 Paper (Top edge, side by side, leaving a standard margin)
-        const marginY = 150; // pixels from top
-        const marginX = 150; // pixels from left edge
-        
-        // Target Print Size for Aadhar (approx 85mm x 54mm) -> on 300 DPI that is exactly 1004 x 638 px
+        // 🔥 PERFECT PROPORTION MATH - FIXES MISSING HEADER & SQUISHING 🔥
+        // Target Print Size for Aadhar (approx 85mm x 54mm) -> exactly 1004 x 638 px on 300 DPI
         const targetW = 1004;
         const targetH = 638;
+        
+        // Is nayi trick se height automatic calculate hogi taaki image daba/kheecha hua na lage
+        let cropW = rw * 0.440; // Width page ka 44% lega
+        let cropH = cropW * (targetH / targetW); // Exactly destination ratio ko match karega
+        
+        let cropY = rh * 0.672; // Start exactly below the scissor line (Brings back the top logos!)
+        
+        let frontCropX = rw * 0.038; // Left Margin
+        let backCropX = rw * 0.518;  // Right Margin
+
+        // Where to paste on the A4 Paper
+        const marginY = 150; // pixels from top
+        const marginX = 150; // pixels from left edge
         const gap = 80; // gap between front and back card
 
         try {
