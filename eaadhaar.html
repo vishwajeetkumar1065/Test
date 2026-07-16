@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Zero Squishing. Exact Match.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Zero Squishing. 100% Edge-to-Edge Fill.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -162,23 +162,21 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 100% PERFECT MATH (THE SWEET SPOT) 🔥
-        // 0.726 bypasses the middle scissor line perfectly and starts right above "Government of India"
-        let cropY = rh * 0.726; 
-        let cropH = rh * 0.216; // Reaches perfectly below the bottom red border
-        let cropW = rw * 0.445; // Captures vertical text on the left completely
+        // 🔥 EXTRA TIGHT CROP MATH TO FILL THE BOX 100% 🔥
+        // Pushed boundaries inside to cut off all white space from the PDF
+        let cropY = rh * 0.732; // Exact top edge of the card graphics
+        let cropH = rh * 0.186; // Exact height, stops right below the bottom red border
+        let cropW = rw * 0.415; // Exact width, hugging the edges
         
-        let frontCropX = rw * 0.038; // Left Margin
-        let backCropX = rw * 0.515;  // Right Margin
+        let frontCropX = rw * 0.044; // Exact left edge of the front card
+        let backCropX = rw * 0.540;  // Exact left edge of the back card
 
         // Where to paste on the A4 Paper
         const marginY = 150; 
         const marginX = 150; 
         const gap = 80; 
 
-        // 🔥 ANTI-SQUISHING MAGIC 🔥
-        // Instead of forcing it into a 1004x638 box, we calculate the exact height 
-        // dynamically based on what was cropped. Aspect ratio is perfectly locked!
+        // Because we tightened the crop, it will automatically fill this target box perfectly
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
@@ -197,7 +195,7 @@
                 marginX + targetW + gap, marginY, targetW, targetH 
             );
 
-            // Draw precise cut-lines (dotted border)
+            // Draw precise cut-lines (dotted border) exactly on the edges
             printCtx.strokeStyle = "#888888";
             printCtx.lineWidth = 3;
             printCtx.setLineDash([15, 15]);
