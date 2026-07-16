@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Original Scissor Line. Zero Extra Text.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Forced Stretch-to-Fill. Scissor Line Included.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -161,41 +161,40 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 THE EXACT MATCH MATH (RESTORED SCISSOR LINE) 🔥
-        // This targets the bottom pocket card perfectly INCLUSIVE of the native PDF scissor line.
+        // 🔥 NATIVE CROP COORDINATES 🔥
         const frontCropX = rw * 0.035; 
-        const backCropX  = rw * 0.510;
+        const backCropX  = rw * 0.512;
+        
+        // Starts exactly from the original PDF scissor line downwards
+        const cropY = rh * 0.672; 
+        const cropW = rw * 0.450;
+        const cropH = rh * 0.292; 
 
-        // 0.676 captures exactly from the original PDF scissor line downwards
-        const cropY = rh * 0.676; 
-        const cropW = rw * 0.455;
-        // 0.288 covers everything down to the red border perfectly
-        const cropH = rh * 0.288; 
-
-        // Size configuration (Maintains aspect ratio, NO squishing)
-        const targetW = 1004;
-        const targetH = targetW * (cropH / cropW); 
+        // 🔥 FIXED "STRETCH-TO-FILL" SIZE 🔥
+        // Forces the image to exactly match the standard 85x54mm ID card size
+        const targetW = 1004; 
+        const targetH = 638;  // Fixed height! This will stretch and completely fill the box.
 
         // Auto-center on A4
         const marginX = (A4_WIDTH - (targetW * 2)) / 2; 
         const marginY = 250; 
 
         try {
-            // Draw Front Side (Left)
+            // Draw Front Side (Left) - Stretches to completely fill targetW and targetH
             printCtx.drawImage(
                 rawImageCanvas, 
                 frontCropX, cropY, cropW, cropH, 
                 marginX, marginY, targetW, targetH 
             );
 
-            // Draw Back Side (Right) - Attached directly to Front!
+            // Draw Back Side (Right) - Attached directly to Front! Stretches to fill.
             printCtx.drawImage(
                 rawImageCanvas, 
                 backCropX, cropY, cropW, cropH, 
                 marginX + targetW, marginY, targetW, targetH 
             );
 
-            // 🔥 Draw SOLID BLACK OUTSIDE BOX (Clean Border) 🔥
+            // 🔥 Draw SOLID BLACK OUTSIDE BOX 🔥
             printCtx.strokeStyle = "#000000"; 
             printCtx.lineWidth = 4; // Thick solid line 
             printCtx.setLineDash([]); // No dashes
