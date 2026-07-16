@@ -161,17 +161,16 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 THE EXACT MATCH MATH 🔥
-        // Retrieves top logos and bottom footers natively from the PDF
-        // Full Aadhaar card crop
-const frontCropX = rw * 0.020;
-const backCropX  = rw * 0.500;
+        // 🔥 RESTORED THE EXACT MATHEMATICAL SWEET SPOT 🔥
+        // This targets ONLY the bottom pocket card perfectly.
+        const frontCropX = rw * 0.038; 
+        const backCropX  = rw * 0.515;
 
-const cropY = rh * 0.645;
-const cropW = rw * 0.480;
-const cropH = rh * 0.330;  
+        const cropY = rh * 0.688; // Starts right below the scissor line
+        const cropW = rw * 0.445;
+        const cropH = rh * 0.285; // Captures exactly down to the bottom border 
 
-        // Size configuration
+        // Size configuration (Maintains aspect ratio, NO squishing)
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
@@ -206,8 +205,6 @@ const cropH = rh * 0.330;
             printCtx.moveTo(marginX + targetW, marginY);
             printCtx.lineTo(marginX + targetW, marginY + targetH);
             printCtx.stroke();
-
-            // ALL EXTRA CANVAS TEXT / EMOJIS REMOVED FOR A 100% CLEAN LOOK.
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
