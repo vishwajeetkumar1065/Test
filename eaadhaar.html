@@ -163,12 +163,13 @@
 
         // 🔥 THE EXACT MATCH MATH 🔥
         // Retrieves top logos and bottom footers natively from the PDF
-        let cropY = rh * 0.676; 
-        let cropH = rh * 0.288; 
-        let cropW = rw * 0.455; 
-        
-        let frontCropX = rw * 0.035; 
-        let backCropX = rw * 0.510;  
+        // Full Aadhaar card crop
+const frontCropX = rw * 0.020;
+const backCropX  = rw * 0.500;
+
+const cropY = rh * 0.645;
+const cropW = rw * 0.480;
+const cropH = rh * 0.330;  
 
         // Size configuration
         const targetW = 1004;
