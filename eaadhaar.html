@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Solid Black Rectangle. Zero Extra Text.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Original Scissor Line. Zero Extra Text.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -111,7 +111,7 @@
             statusText.style.display = "none";
             previewArea.style.display = "block";
             printBtn.style.display = "block";
-            processBtn.innerText = "✓ Perfect Clean Crop Applied!";
+            processBtn.innerText = "✓ Perfect Joint Crop Applied!";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -161,18 +161,18 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 THE PERFECT POCKET-CARD MATH 🔥
-        // This is strictly locked to the bottom pocket-card coordinates.
-        const frontCropX = rw * 0.038; 
-        const backCropX  = rw * 0.515;
+        // 🔥 THE EXACT MATCH MATH (RESTORED SCISSOR LINE) 🔥
+        // This targets the bottom pocket card perfectly INCLUSIVE of the native PDF scissor line.
+        const frontCropX = rw * 0.035; 
+        const backCropX  = rw * 0.510;
 
-        // 0.718 skips the scissor line completely and starts exactly at "Government of India"
-        const cropY = rh * 0.718; 
-        const cropW = rw * 0.435;
-        // 0.205 captures exactly down to the bottom red line without extra white space
-        const cropH = rh * 0.205; 
+        // 0.676 captures exactly from the original PDF scissor line downwards
+        const cropY = rh * 0.676; 
+        const cropW = rw * 0.455;
+        // 0.288 covers everything down to the red border perfectly
+        const cropH = rh * 0.288; 
 
-        // Size configuration (Calculates exact proportion, NO squishing)
+        // Size configuration (Maintains aspect ratio, NO squishing)
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
@@ -197,7 +197,7 @@
 
             // 🔥 Draw SOLID BLACK OUTSIDE BOX (Clean Border) 🔥
             printCtx.strokeStyle = "#000000"; 
-            printCtx.lineWidth = 4; // Thick solid line for clear cutting/lamination
+            printCtx.lineWidth = 4; // Thick solid line 
             printCtx.setLineDash([]); // No dashes
             printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
             
@@ -207,9 +207,6 @@
             printCtx.moveTo(marginX + targetW, marginY);
             printCtx.lineTo(marginX + targetW, marginY + targetH);
             printCtx.stroke();
-
-            // NOTE: All extra canvas text, dates, and emojis have been completely removed.
-            // Only the clean card and the black box will print.
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
