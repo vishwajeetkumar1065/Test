@@ -59,7 +59,6 @@
             <input type="file" id="fileInput" accept="application/pdf">
         </label>
         <input type="text" id="pdfPassword" placeholder="PDF Password (e.g. KHUS2003)">
-        <input type="text" id="issuedDate" placeholder="Aadhaar Issued Date (e.g. 15/11/2014)">
     </div>
 
     <div id="statusText" class="status">🔄 Extracting & Cropping... Please wait.</div>
@@ -214,18 +213,6 @@
             printCtx.textAlign = "center";
             printCtx.textBaseline = "middle";
             printCtx.fillText("✂️", marginX + targetW, marginY - 25);
-
-            // 📏 Rotated side label - LEFT ("Aadhaar no. issued: DD/MM/YYYY")
-            const issuedDate = document.getElementById('issuedDate').value.trim() || "__/__/____";
-            printCtx.save();
-            printCtx.translate(marginX - 15, marginY + targetH);
-            printCtx.rotate(-Math.PI / 2);
-            printCtx.font = "bold 22px Arial";
-            printCtx.fillStyle = "#000000";
-            printCtx.textAlign = "left";
-            printCtx.textBaseline = "middle";
-            printCtx.fillText("Aadhaar no. issued: " + issuedDate, 0, 0);
-            printCtx.restore();
 
             // 📏 Rotated side label - RIGHT ("Details as on: today's date")
             const today = new Date();
