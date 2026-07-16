@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Single Box For Easy Folding.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Joint Crop. Solid Black Rectangle For Easy Cutting.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -161,7 +161,7 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 THE ULTIMATE SWEET SPOT MATH (1mm Invisible Safe Zone) 🔥
+        // Crop math
         let cropY = rh * 0.728; 
         let cropH = rh * 0.198; 
         let cropW = rw * 0.430; 
@@ -173,10 +173,9 @@
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
-        // 🔥 JOINT CARD ALIGNMENT (Perfectly Centered on A4) 🔥
-        // No gap between front and back. Placed exactly in the middle of A4.
-        const marginX = (A4_WIDTH - (targetW * 2)) / 2; // Auto-center
-        const marginY = 250; // Top padding
+        // Auto-center on A4
+        const marginX = (A4_WIDTH - (targetW * 2)) / 2; 
+        const marginY = 250; 
 
         try {
             // Draw Front Side (Left)
@@ -193,23 +192,19 @@
                 marginX + targetW, marginY, targetW, targetH 
             );
 
-            // 🔥 Draw SINGLE OUTSIDE BOX (Cut Line) 🔥
-            printCtx.strokeStyle = "#888888";
-            printCtx.lineWidth = 3;
-            printCtx.setLineDash([15, 15]);
-            // Multiply width by 2 to cover both cards in one single box
+            // 🔥 Draw SOLID BLACK OUTSIDE BOX (Cut Line) 🔥
+            printCtx.strokeStyle = "#000000"; // Solid Black
+            printCtx.lineWidth = 4; // Thicker line for clear visibility
+            printCtx.setLineDash([]); // Removes the dotted effect
+            
+            // Multiply width by 2 to cover both cards in one single solid box
             printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
             
-            // 🔥 Draw FAINT FOLDING LINE (Center Line) 🔥
-            printCtx.strokeStyle = "#e0e0e0"; // Very light grey
-            printCtx.lineWidth = 2;
-            printCtx.setLineDash([5, 5]);
+            // 🔥 Draw SOLID BLACK FOLDING LINE (Center Line) 🔥
             printCtx.beginPath();
             printCtx.moveTo(marginX + targetW, marginY);
             printCtx.lineTo(marginX + targetW, marginY + targetH);
             printCtx.stroke();
-            
-            printCtx.setLineDash([]); // reset
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
