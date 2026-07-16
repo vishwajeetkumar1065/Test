@@ -51,7 +51,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">1-Click Perfect Crop. Clean Solid Box. No Extra Text.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Solid Black Rectangle. Perfect Native Crop.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -111,7 +111,7 @@
             statusText.style.display = "none";
             previewArea.style.display = "block";
             printBtn.style.display = "block";
-            processBtn.innerText = "✓ Perfect Clean Crop Applied!";
+            processBtn.innerText = "✓ Perfect Joint Crop Applied!";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -161,17 +161,16 @@
         const rw = rawImageCanvas.width;
         const rh = rawImageCanvas.height;
 
-        // 🔥 PERFECTED CLEAN MATH 🔥
-        // 0.688 is the exact golden spot. It completely skips the text above the scissor line
-        // and starts exactly from the "Government of India" header.
-        let cropY = rh * 0.688; 
-        let cropH = rh * 0.285; // Captures all the way down to the bottom border seamlessly
-        let cropW = rw * 0.445; // Covers exact card width edge-to-edge
+        // 🔥 THE EXACT MATCH MATH 🔥
+        // Retrieves top logos and bottom footers natively from the PDF
+        let cropY = rh * 0.676; 
+        let cropH = rh * 0.288; 
+        let cropW = rw * 0.455; 
         
-        let frontCropX = rw * 0.038; // Perfect Left Margin
-        let backCropX = rw * 0.515;  // Perfect Right Start Margin
+        let frontCropX = rw * 0.035; 
+        let backCropX = rw * 0.510;  
 
-        // Size configuration (Calculates exact proportion to prevent any squeeze)
+        // Size configuration
         const targetW = 1004;
         const targetH = targetW * (cropH / cropW); 
 
@@ -194,24 +193,20 @@
                 marginX + targetW, marginY, targetW, targetH 
             );
 
-            // 🔥 Draw SOLID BLACK OUTSIDE BOX (Cut Line) 🔥
-            printCtx.strokeStyle = "#000000"; // Solid Black
-            printCtx.lineWidth = 4; // Thick line for bold printing 
-            printCtx.setLineDash([]); // Removes any dotted effect
-            
-            // Multiply width by 2 to cover both cards in one single solid box
+            // 🔥 Draw SOLID BLACK OUTSIDE BOX (Clean Border) 🔥
+            printCtx.strokeStyle = "#000000"; 
+            printCtx.lineWidth = 4; // Thick solid line 
+            printCtx.setLineDash([]); // No dashes
             printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
             
-            // 🔥 Draw DASHED BLACK FOLDING LINE (Center Line) 🔥
-            printCtx.setLineDash([10, 8]);
+            // 🔥 Draw SOLID BLACK FOLDING LINE (Center Line) 🔥
+            printCtx.lineWidth = 2; // Slightly thinner for the exact center fold
             printCtx.beginPath();
             printCtx.moveTo(marginX + targetW, marginY);
             printCtx.lineTo(marginX + targetW, marginY + targetH);
             printCtx.stroke();
-            printCtx.setLineDash([]);
 
-            // SAB KUCH BAAHAR KA (EXTRA TEXT) DELETE KAR DIYA GAYA HAI!
-            // Sirf ek clean box print hoga.
+            // ALL EXTRA CANVAS TEXT / EMOJIS REMOVED FOR A 100% CLEAN LOOK.
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
