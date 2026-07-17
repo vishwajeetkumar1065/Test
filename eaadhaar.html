@@ -29,9 +29,19 @@
 
         button.action-btn { background: #a6e3a1; color: #11111b; border: none; padding: 12px 25px; font-size: 16px; font-weight: bold; border-radius: 6px; cursor: pointer; width: 100%; margin-bottom: 15px; transition: 0.3s; }
         button.action-btn:hover { background: #94d68f; }
+        button.action-btn:disabled { background: #45475a; color: #9399b2; cursor: not-allowed; }
         button.print-btn { background: #fab387; margin-top: 15px; display: none; }
+        button.secondary-btn { background: #f38ba8; }
+        button.secondary-btn:hover { background: #e57a99; }
 
         .status { color: #f9e2af; font-weight: bold; margin-bottom: 15px; display: none; }
+        .instruction { color: #89dceb; font-weight: bold; margin-bottom: 10px; display: none; font-size: 15px; }
+
+        /* Calibration (manual crop) area */
+        .calib-wrapper { background: #11111b; padding: 10px; border-radius: 4px; display: none; margin-bottom: 15px; }
+        #calibCanvas { max-width: 100%; border: 1px dashed #89b4fa; cursor: crosshair; }
+        .calib-buttons { display: flex; gap: 10px; margin-bottom: 15px; display: none; }
+        .calib-buttons button { flex: 1; margin-bottom: 0; }
 
         /* Preview Area */
         .preview-wrapper { background: white; padding: 10px; border-radius: 4px; overflow: auto; max-height: 500px; display: none; }
@@ -51,7 +61,7 @@
 
 <div class="admin-panel">
     <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Exact Match. Forced Stretch-to-Fill. Scissor Line Included.</p>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Manual Select Crop. Stretch-to-Fill. Scissor Line Included.</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -61,11 +71,24 @@
         <input type="text" id="pdfPassword" placeholder="PDF Password (e.g. KHUS2003)">
     </div>
 
-    <div id="statusText" class="status">🔄 Extracting & Cropping... Please wait.</div>
+    <div id="statusText" class="status">🔄 Extracting PDF page... Please wait.</div>
 
-    <button id="processBtn" class="action-btn" onclick="processAadhar()">✂️ 2. Auto-Crop & Arrange</button>
+    <button id="processBtn" class="action-btn" onclick="loadAndCalibrate()">📄 2. Load PDF &amp; Select Crop Area</button>
 
-    <button id="printBtn" class="action-btn print-btn" onclick="window.print()">🖨️ 3. Print on A4 Glossy Paper</button>
+    <div id="instructionText" class="instruction">
+        ✂️ Mouse se drag karke <b>FRONT</b> card (photo wala part) ke around box banayein
+    </div>
+
+    <div class="calib-wrapper" id="calibWrapper">
+        <canvas id="calibCanvas"></canvas>
+    </div>
+
+    <div class="calib-buttons" id="calibButtons">
+        <button class="action-btn secondary-btn" onclick="resetSelection()">↺ Reset Selection</button>
+        <button id="generateBtn" class="action-btn" onclick="drawFinalA4()" disabled>✂️ 3. Generate &amp; Arrange</button>
+    </div>
+
+    <button id="printBtn" class="action-btn print-btn" onclick="window.print()">🖨️ 4. Print on A4 Glossy Paper</button>
 
     <div class="preview-wrapper" id="previewArea">
         <!-- Canvas represents an A4 size page at 300 DPI -->
@@ -80,38 +103,57 @@
     const fileInput = document.getElementById('fileInput');
     const processBtn = document.getElementById('processBtn');
     const statusText = document.getElementById('statusText');
+    const instructionText = document.getElementById('instructionText');
     const previewArea = document.getElementById('previewArea');
     const printBtn = document.getElementById('printBtn');
-    
+    const calibWrapper = document.getElementById('calibWrapper');
+    const calibCanvas = document.getElementById('calibCanvas');
+    const calibCtx = calibCanvas.getContext('2d');
+    const calibButtons = document.getElementById('calibButtons');
+    const generateBtn = document.getElementById('generateBtn');
+
     // A4 Standard Dimensions (300 DPI)
     const A4_WIDTH = 2480;
     const A4_HEIGHT = 3508;
     const printCanvas = document.getElementById('printCanvas');
     const printCtx = printCanvas.getContext('2d');
 
-    async function processAadhar() {
+    // Manual crop selection state
+    const DISPLAY_WIDTH = 760; // fixed display width for calibration canvas
+    let displayScale = 1;       // raw px per display px
+    let mode = 'front';         // 'front' -> 'back' -> 'done'
+    let isDragging = false;
+    let dragStartX = 0, dragStartY = 0;
+    let frontRect = null;       // {x,y,w,h} in RAW canvas coordinates
+    let backRect = null;        // {x,y,w,h} in RAW canvas coordinates
+    let currentRectDisplay = null; // live rectangle while dragging (display coords)
+
+    async function loadAndCalibrate() {
         const file = fileInput.files[0];
         if (!file) {
             alert("Please select an E-Aadhar PDF first!");
             return;
         }
+        if (file.type !== "application/pdf") {
+            alert("Invalid file type. Please upload the E-Aadhar PDF.");
+            return;
+        }
 
         statusText.style.display = "block";
         processBtn.disabled = true;
+        previewArea.style.display = "none";
+        printBtn.style.display = "none";
 
         try {
-            if (file.type === "application/pdf") {
-                await loadPDF(file);
-            } else {
-                throw new Error("Invalid file type. Please upload the E-Aadhar PDF.");
-            }
-            
-            drawFinalA4();
+            await loadPDF(file);
+            setupCalibrationCanvas();
 
             statusText.style.display = "none";
-            previewArea.style.display = "block";
-            printBtn.style.display = "block";
-            processBtn.innerText = "✓ Perfect Joint Crop Applied!";
+            calibWrapper.style.display = "block";
+            calibButtons.style.display = "flex";
+            instructionText.style.display = "block";
+            resetSelection(); // resets mode to 'front' and redraws
+            processBtn.innerText = "✓ PDF Loaded — ab crop select karein neeche";
             processBtn.style.background = "#6c7086";
 
         } catch (error) {
@@ -153,22 +195,147 @@
         });
     }
 
+    function setupCalibrationCanvas() {
+        const rw = rawImageCanvas.width;
+        const rh = rawImageCanvas.height;
+        displayScale = rw / DISPLAY_WIDTH;
+        calibCanvas.width = DISPLAY_WIDTH;
+        calibCanvas.height = Math.round(rh / displayScale);
+        redrawCalibCanvas();
+    }
+
+    function redrawCalibCanvas() {
+        // Draw the scaled-down full page
+        calibCtx.drawImage(rawImageCanvas, 0, 0, rawImageCanvas.width, rawImageCanvas.height,
+                            0, 0, calibCanvas.width, calibCanvas.height);
+
+        // Draw already-confirmed rectangles
+        if (frontRect) drawDisplayRect(toDisplayRect(frontRect), "#a6e3a1", "FRONT");
+        if (backRect) drawDisplayRect(toDisplayRect(backRect), "#89b4fa", "BACK");
+
+        // Draw the rectangle currently being dragged
+        if (currentRectDisplay) {
+            const color = (mode === 'front') ? "#a6e3a1" : "#89b4fa";
+            drawDisplayRect(currentRectDisplay, color, mode.toUpperCase());
+        }
+    }
+
+    function drawDisplayRect(rect, color, label) {
+        calibCtx.strokeStyle = color;
+        calibCtx.lineWidth = 2;
+        calibCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
+        calibCtx.fillStyle = color;
+        calibCtx.font = "bold 14px sans-serif";
+        calibCtx.fillText(label, rect.x + 4, rect.y + 16);
+    }
+
+    function toDisplayRect(rawRect) {
+        return {
+            x: rawRect.x / displayScale,
+            y: rawRect.y / displayScale,
+            w: rawRect.w / displayScale,
+            h: rawRect.h / displayScale
+        };
+    }
+
+    function toRawRect(dispRect) {
+        return {
+            x: dispRect.x * displayScale,
+            y: dispRect.y * displayScale,
+            w: dispRect.w * displayScale,
+            h: dispRect.h * displayScale
+        };
+    }
+
+    function getCanvasPos(evt) {
+        const rect = calibCanvas.getBoundingClientRect();
+        const scaleX = calibCanvas.width / rect.width;
+        const scaleY = calibCanvas.height / rect.height;
+        const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
+        const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
+        return {
+            x: (clientX - rect.left) * scaleX,
+            y: (clientY - rect.top) * scaleY
+        };
+    }
+
+    function startDrag(evt) {
+        if (mode === 'done') return;
+        evt.preventDefault();
+        const pos = getCanvasPos(evt);
+        isDragging = true;
+        dragStartX = pos.x;
+        dragStartY = pos.y;
+        currentRectDisplay = { x: pos.x, y: pos.y, w: 0, h: 0 };
+    }
+
+    function moveDrag(evt) {
+        if (!isDragging) return;
+        evt.preventDefault();
+        const pos = getCanvasPos(evt);
+        currentRectDisplay = {
+            x: Math.min(dragStartX, pos.x),
+            y: Math.min(dragStartY, pos.y),
+            w: Math.abs(pos.x - dragStartX),
+            h: Math.abs(pos.y - dragStartY)
+        };
+        redrawCalibCanvas();
+    }
+
+    function endDrag(evt) {
+        if (!isDragging) return;
+        isDragging = false;
+        if (!currentRectDisplay || currentRectDisplay.w < 5 || currentRectDisplay.h < 5) {
+            currentRectDisplay = null;
+            redrawCalibCanvas();
+            return;
+        }
+
+        const raw = toRawRect(currentRectDisplay);
+        if (mode === 'front') {
+            frontRect = raw;
+            mode = 'back';
+            instructionText.innerHTML = "✂️ Ab mouse se drag karke <b>BACK</b> card (address wala part) ke around box banayein";
+        } else if (mode === 'back') {
+            backRect = raw;
+            mode = 'done';
+            instructionText.innerHTML = "✅ Dono sides select ho gaye. Neeche <b>Generate &amp; Arrange</b> dabayein.";
+            generateBtn.disabled = false;
+        }
+        currentRectDisplay = null;
+        redrawCalibCanvas();
+    }
+
+    calibCanvas.addEventListener('mousedown', startDrag);
+    calibCanvas.addEventListener('mousemove', moveDrag);
+    calibCanvas.addEventListener('mouseup', endDrag);
+    calibCanvas.addEventListener('mouseleave', () => { if (isDragging) endDrag(); });
+    calibCanvas.addEventListener('touchstart', startDrag, { passive: false });
+    calibCanvas.addEventListener('touchmove', moveDrag, { passive: false });
+    calibCanvas.addEventListener('touchend', endDrag);
+
+    function resetSelection() {
+        frontRect = null;
+        backRect = null;
+        currentRectDisplay = null;
+        isDragging = false;
+        mode = 'front';
+        generateBtn.disabled = true;
+        previewArea.style.display = "none";
+        printBtn.style.display = "none";
+        instructionText.innerHTML = "✂️ Mouse se drag karke <b>FRONT</b> card (photo wala part) ke around box banayein";
+        if (rawImageCanvas.width > 0) redrawCalibCanvas();
+    }
+
     function drawFinalA4() {
+        if (!frontRect || !backRect) {
+            alert("Pehle FRONT aur BACK dono ka crop area select karein!");
+            return;
+        }
+
         // Clear A4 Canvas and make it white
         printCtx.fillStyle = "#FFFFFF";
         printCtx.fillRect(0, 0, A4_WIDTH, A4_HEIGHT);
-
-        const rw = rawImageCanvas.width;
-        const rh = rawImageCanvas.height;
-
-        // 🔥 NATIVE CROP COORDINATES 🔥
-        const frontCropX = rw * 0.035; 
-        const backCropX  = rw * 0.512;
-        
-        // Starts exactly from the original PDF scissor line downwards
-        const cropY = rh * 0.672; 
-        const cropW = rw * 0.450;
-        const cropH = rh * 0.292; 
 
         // 🔥 FIXED "STRETCH-TO-FILL" SIZE 🔥
         // Forces the image to exactly match the standard 85x54mm ID card size
@@ -180,18 +347,18 @@
         const marginY = 250; 
 
         try {
-            // Draw Front Side (Left) - Stretches to completely fill targetW and targetH
+            // Draw Front Side (Left) - uses YOUR manually selected crop box
             printCtx.drawImage(
-                rawImageCanvas, 
-                frontCropX, cropY, cropW, cropH, 
-                marginX, marginY, targetW, targetH 
+                rawImageCanvas,
+                frontRect.x, frontRect.y, frontRect.w, frontRect.h,
+                marginX, marginY, targetW, targetH
             );
 
-            // Draw Back Side (Right) - Attached directly to Front! Stretches to fill.
+            // Draw Back Side (Right) - uses YOUR manually selected crop box
             printCtx.drawImage(
-                rawImageCanvas, 
-                backCropX, cropY, cropW, cropH, 
-                marginX + targetW, marginY, targetW, targetH 
+                rawImageCanvas,
+                backRect.x, backRect.y, backRect.w, backRect.h,
+                marginX + targetW, marginY, targetW, targetH
             );
 
             // 🔥 Draw SOLID BLACK OUTSIDE BOX 🔥
@@ -207,8 +374,12 @@
             printCtx.lineTo(marginX + targetW, marginY + targetH);
             printCtx.stroke();
 
+            previewArea.style.display = "block";
+            printBtn.style.display = "block";
+
         } catch (e) {
             console.error("Cropping boundary error.", e);
+            alert("Crop error — dobara select karke try karein.");
         }
     }
 </script>
