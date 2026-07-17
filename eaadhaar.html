@@ -3,13 +3,18 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Admin Smart E-Aadhar Print</title>
+    <title>E-Aadhar Direct Print</title>
 
     <!-- PDF.js for reading E-Aadhar securely in browser -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
     <script>
         pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.worker.min.js';
     </script>
+
+    <!-- Supabase JS client — used to upload the cropped Aadhaar image and drop
+         it into the "orders" queue. The dedicated Aadhaar printer on the shop
+         PC (print_server.py) polls this table and prints automatically. -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2/dist/umd/supabase.min.js"></script>
 
     <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
@@ -31,17 +36,8 @@
         button.action-btn:hover { background: #94d68f; }
         button.action-btn:disabled { background: #45475a; color: #9399b2; cursor: not-allowed; }
         button.print-btn { background: #fab387; margin-top: 15px; display: none; }
-        button.secondary-btn { background: #f38ba8; }
-        button.secondary-btn:hover { background: #e57a99; }
 
         .status { color: #f9e2af; font-weight: bold; margin-bottom: 15px; display: none; }
-        .instruction { color: #89dceb; font-weight: bold; margin-bottom: 10px; display: none; font-size: 15px; }
-
-        /* Calibration (manual crop) area */
-        .calib-wrapper { background: #11111b; padding: 10px; border-radius: 4px; display: none; margin-bottom: 15px; }
-        #calibCanvas { max-width: 100%; border: 1px dashed #89b4fa; cursor: crosshair; }
-        .calib-buttons { display: flex; gap: 10px; margin-bottom: 15px; display: none; }
-        .calib-buttons button { flex: 1; margin-bottom: 0; }
 
         /* Preview Area */
         .preview-wrapper { background: white; padding: 10px; border-radius: 4px; overflow: auto; max-height: 500px; display: none; }
@@ -60,8 +56,8 @@
 <body>
 
 <div class="admin-panel">
-    <h2>E-Aadhar Auto-Cutter <span class="badge">ADMIN ONLY</span></h2>
-    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Manual Select Crop. Stretch-to-Fill. Scissor Line Included.</p>
+    <h2>E-Aadhar Direct Print <span class="badge">FULL LETTER PDF</span></h2>
+    <p style="font-size: 13px; color: #a6adc8; margin-bottom: 20px;">Direct crop &amp; arrange — no manual selection. For the standard full-letter e-Aadhaar (card at bottom of page).</p>
 
     <div class="input-group">
         <label class="upload-btn">
@@ -70,25 +66,22 @@
         </label>
         <input type="text" id="pdfPassword" placeholder="PDF Password (e.g. KHUS2003)">
     </div>
-
-    <div id="statusText" class="status">🔄 Extracting PDF page... Please wait.</div>
-
-    <button id="processBtn" class="action-btn" onclick="loadAndCalibrate()">📄 2. Load PDF &amp; Select Crop Area</button>
-
-    <div id="instructionText" class="instruction">
-        ✂️ Mouse se drag karke <b>FRONT</b> card (photo wala part) ke around box banayein
+    <div class="input-group">
+        <input type="text" id="customerName" placeholder="Customer Name (optional, for order log)">
+        <select id="printerChoice" style="padding:12px; border-radius:6px; border:1px solid #45475a; background:#11111b; color:white; flex:1;">
+            <option value="aadhaar" selected>Aadhaar Printer (dedicated)</option>
+            <option value="color">Color Printer</option>
+            <option value="bw">B/W Printer</option>
+            <option value="passport">Passport Printer</option>
+        </select>
     </div>
 
-    <div class="calib-wrapper" id="calibWrapper">
-        <canvas id="calibCanvas"></canvas>
-    </div>
+    <div id="statusText" class="status">🔄 Extracting &amp; Cropping... Please wait.</div>
 
-    <div class="calib-buttons" id="calibButtons">
-        <button class="action-btn secondary-btn" onclick="resetSelection()">↺ Reset Selection</button>
-        <button id="generateBtn" class="action-btn" onclick="drawFinalA4()" disabled>✂️ 3. Generate &amp; Arrange</button>
-    </div>
+    <button id="processBtn" class="action-btn" onclick="processAadhar()">✂️ 2. Crop &amp; Arrange on A4</button>
 
-    <button id="printBtn" class="action-btn print-btn" onclick="window.print()">🖨️ 4. Print on A4 Glossy Paper</button>
+    <button id="printBtn" class="action-btn print-btn" onclick="sendToPrintQueue()">🖨️ 3. Send to Aadhaar Printer</button>
+    <div id="printModeNote" class="print-btn" style="display:none; font-size:12px; color:#a6adc8; margin-top:-10px; margin-bottom:15px;">☁️ Uploads to the order queue — the dedicated Aadhaar printer picks it up and prints automatically within a few seconds.</div>
 
     <div class="preview-wrapper" id="previewArea">
         <!-- Canvas represents an A4 size page at 300 DPI -->
@@ -103,32 +96,23 @@
     const fileInput = document.getElementById('fileInput');
     const processBtn = document.getElementById('processBtn');
     const statusText = document.getElementById('statusText');
-    const instructionText = document.getElementById('instructionText');
     const previewArea = document.getElementById('previewArea');
     const printBtn = document.getElementById('printBtn');
-    const calibWrapper = document.getElementById('calibWrapper');
-    const calibCanvas = document.getElementById('calibCanvas');
-    const calibCtx = calibCanvas.getContext('2d');
-    const calibButtons = document.getElementById('calibButtons');
-    const generateBtn = document.getElementById('generateBtn');
-
+    
     // A4 Standard Dimensions (300 DPI)
     const A4_WIDTH = 2480;
     const A4_HEIGHT = 3508;
     const printCanvas = document.getElementById('printCanvas');
     const printCtx = printCanvas.getContext('2d');
 
-    // Manual crop selection state
-    const DISPLAY_WIDTH = 760; // fixed display width for calibration canvas
-    let displayScale = 1;       // raw px per display px
-    let mode = 'front';         // 'front' -> 'back' -> 'done'
-    let isDragging = false;
-    let dragStartX = 0, dragStartY = 0;
-    let frontRect = null;       // {x,y,w,h} in RAW canvas coordinates
-    let backRect = null;        // {x,y,w,h} in RAW canvas coordinates
-    let currentRectDisplay = null; // live rectangle while dragging (display coords)
+    // 🔥 FIXED, TESTED CROP for the standard Full-Letter e-Aadhaar PDF 🔥
+    // (card cut at the bottom of the page, front-left / back-right)
+    const CROP = {
+        y: 0.721, h: 0.206,
+        frontX: 0.085, backX: 0.500, w: 0.418
+    };
 
-    async function loadAndCalibrate() {
+    async function processAadhar() {
         const file = fileInput.files[0];
         if (!file) {
             alert("Please select an E-Aadhar PDF first!");
@@ -146,15 +130,15 @@
 
         try {
             await loadPDF(file);
-            setupCalibrationCanvas();
+            drawFinalA4();
 
             statusText.style.display = "none";
-            calibWrapper.style.display = "block";
-            calibButtons.style.display = "flex";
-            instructionText.style.display = "block";
-            resetSelection(); // resets mode to 'front' and redraws
-            processBtn.innerText = "✓ PDF Loaded — ab crop select karein neeche";
+            previewArea.style.display = "block";
+            printBtn.style.display = "block";
+            processBtn.innerText = "✓ Cropped! Scroll down to print.";
             processBtn.style.background = "#6c7086";
+
+            printModeNote.style.display = "block";
 
         } catch (error) {
             console.error(error);
@@ -195,191 +179,151 @@
         });
     }
 
-    function setupCalibrationCanvas() {
-        const rw = rawImageCanvas.width;
-        const rh = rawImageCanvas.height;
-        displayScale = rw / DISPLAY_WIDTH;
-        calibCanvas.width = DISPLAY_WIDTH;
-        calibCanvas.height = Math.round(rh / displayScale);
-        redrawCalibCanvas();
-    }
-
-    function redrawCalibCanvas() {
-        // Draw the scaled-down full page
-        calibCtx.drawImage(rawImageCanvas, 0, 0, rawImageCanvas.width, rawImageCanvas.height,
-                            0, 0, calibCanvas.width, calibCanvas.height);
-
-        // Draw already-confirmed rectangles
-        if (frontRect) drawDisplayRect(toDisplayRect(frontRect), "#a6e3a1", "FRONT");
-        if (backRect) drawDisplayRect(toDisplayRect(backRect), "#89b4fa", "BACK");
-
-        // Draw the rectangle currently being dragged
-        if (currentRectDisplay) {
-            const color = (mode === 'front') ? "#a6e3a1" : "#89b4fa";
-            drawDisplayRect(currentRectDisplay, color, mode.toUpperCase());
-        }
-    }
-
-    function drawDisplayRect(rect, color, label) {
-        calibCtx.strokeStyle = color;
-        calibCtx.lineWidth = 2;
-        calibCtx.strokeRect(rect.x, rect.y, rect.w, rect.h);
-        calibCtx.fillStyle = color;
-        calibCtx.font = "bold 14px sans-serif";
-        calibCtx.fillText(label, rect.x + 4, rect.y + 16);
-    }
-
-    function toDisplayRect(rawRect) {
-        return {
-            x: rawRect.x / displayScale,
-            y: rawRect.y / displayScale,
-            w: rawRect.w / displayScale,
-            h: rawRect.h / displayScale
-        };
-    }
-
-    function toRawRect(dispRect) {
-        return {
-            x: dispRect.x * displayScale,
-            y: dispRect.y * displayScale,
-            w: dispRect.w * displayScale,
-            h: dispRect.h * displayScale
-        };
-    }
-
-    function getCanvasPos(evt) {
-        const rect = calibCanvas.getBoundingClientRect();
-        const scaleX = calibCanvas.width / rect.width;
-        const scaleY = calibCanvas.height / rect.height;
-        const clientX = evt.touches ? evt.touches[0].clientX : evt.clientX;
-        const clientY = evt.touches ? evt.touches[0].clientY : evt.clientY;
-        return {
-            x: (clientX - rect.left) * scaleX,
-            y: (clientY - rect.top) * scaleY
-        };
-    }
-
-    function startDrag(evt) {
-        if (mode === 'done') return;
-        evt.preventDefault();
-        const pos = getCanvasPos(evt);
-        isDragging = true;
-        dragStartX = pos.x;
-        dragStartY = pos.y;
-        currentRectDisplay = { x: pos.x, y: pos.y, w: 0, h: 0 };
-    }
-
-    function moveDrag(evt) {
-        if (!isDragging) return;
-        evt.preventDefault();
-        const pos = getCanvasPos(evt);
-        currentRectDisplay = {
-            x: Math.min(dragStartX, pos.x),
-            y: Math.min(dragStartY, pos.y),
-            w: Math.abs(pos.x - dragStartX),
-            h: Math.abs(pos.y - dragStartY)
-        };
-        redrawCalibCanvas();
-    }
-
-    function endDrag(evt) {
-        if (!isDragging) return;
-        isDragging = false;
-        if (!currentRectDisplay || currentRectDisplay.w < 5 || currentRectDisplay.h < 5) {
-            currentRectDisplay = null;
-            redrawCalibCanvas();
-            return;
-        }
-
-        const raw = toRawRect(currentRectDisplay);
-        if (mode === 'front') {
-            frontRect = raw;
-            mode = 'back';
-            instructionText.innerHTML = "✂️ Ab mouse se drag karke <b>BACK</b> card (address wala part) ke around box banayein";
-        } else if (mode === 'back') {
-            backRect = raw;
-            mode = 'done';
-            instructionText.innerHTML = "✅ Dono sides select ho gaye. Neeche <b>Generate &amp; Arrange</b> dabayein.";
-            generateBtn.disabled = false;
-        }
-        currentRectDisplay = null;
-        redrawCalibCanvas();
-    }
-
-    calibCanvas.addEventListener('mousedown', startDrag);
-    calibCanvas.addEventListener('mousemove', moveDrag);
-    calibCanvas.addEventListener('mouseup', endDrag);
-    calibCanvas.addEventListener('mouseleave', () => { if (isDragging) endDrag(); });
-    calibCanvas.addEventListener('touchstart', startDrag, { passive: false });
-    calibCanvas.addEventListener('touchmove', moveDrag, { passive: false });
-    calibCanvas.addEventListener('touchend', endDrag);
-
-    function resetSelection() {
-        frontRect = null;
-        backRect = null;
-        currentRectDisplay = null;
-        isDragging = false;
-        mode = 'front';
-        generateBtn.disabled = true;
-        previewArea.style.display = "none";
-        printBtn.style.display = "none";
-        instructionText.innerHTML = "✂️ Mouse se drag karke <b>FRONT</b> card (photo wala part) ke around box banayein";
-        if (rawImageCanvas.width > 0) redrawCalibCanvas();
-    }
-
     function drawFinalA4() {
-        if (!frontRect || !backRect) {
-            alert("Pehle FRONT aur BACK dono ka crop area select karein!");
-            return;
-        }
-
         // Clear A4 Canvas and make it white
         printCtx.fillStyle = "#FFFFFF";
         printCtx.fillRect(0, 0, A4_WIDTH, A4_HEIGHT);
 
-        // 🔥 FIXED "STRETCH-TO-FILL" SIZE 🔥
-        // Forces the image to exactly match the standard 85x54mm ID card size
-        const targetW = 1004; 
-        const targetH = 638;  // Fixed height! This will stretch and completely fill the box.
+        const rw = rawImageCanvas.width;
+        const rh = rawImageCanvas.height;
+
+        // Crop rectangles derived from the fixed, tested CROP percentages
+        const frontRect = { x: CROP.frontX * rw, y: CROP.y * rh, w: CROP.w * rw, h: CROP.h * rh };
+        const backRect  = { x: CROP.backX  * rw, y: CROP.y * rh, w: CROP.w * rw, h: CROP.h * rh };
+
+        // 🔥 Aspect-ratio preserving scale — no stretch/distortion 🔥
+        const targetW = 1004;
+        const frontOutH = frontRect.h * (targetW / frontRect.w);
+        const backOutH  = backRect.h  * (targetW / backRect.w);
+        const boxH = Math.max(frontOutH, backOutH);
 
         // Auto-center on A4
         const marginX = (A4_WIDTH - (targetW * 2)) / 2; 
-        const marginY = 250; 
+        const marginY = 0; 
 
         try {
-            // Draw Front Side (Left) - uses YOUR manually selected crop box
+            // Draw Front Side (Left)
             printCtx.drawImage(
                 rawImageCanvas,
                 frontRect.x, frontRect.y, frontRect.w, frontRect.h,
-                marginX, marginY, targetW, targetH
+                marginX, marginY, targetW, frontOutH
             );
 
-            // Draw Back Side (Right) - uses YOUR manually selected crop box
+            // Draw Back Side (Right)
             printCtx.drawImage(
                 rawImageCanvas,
                 backRect.x, backRect.y, backRect.w, backRect.h,
-                marginX + targetW, marginY, targetW, targetH
+                marginX + targetW, marginY, targetW, backOutH
             );
 
-            // 🔥 Draw SOLID BLACK OUTSIDE BOX 🔥
+            // ✂️ Dashed scissor-cut OUTER box ✂️
             printCtx.strokeStyle = "#000000"; 
-            printCtx.lineWidth = 4; // Thick solid line 
-            printCtx.setLineDash([]); // No dashes
-            printCtx.strokeRect(marginX, marginY, targetW * 2, targetH);
-            
-            // 🔥 Draw SOLID BLACK FOLDING LINE (Center Line) 🔥
-            printCtx.lineWidth = 2; // Slightly thinner for the exact center fold
+            printCtx.lineWidth = 3; 
+            printCtx.setLineDash([14, 10]);
+            printCtx.strokeRect(marginX, marginY, targetW * 2, boxH);
+            printCtx.setLineDash([]);
+
+            // ✂️ Dashed scissor-cut CENTER fold line ✂️
+            printCtx.lineWidth = 2;
+            printCtx.setLineDash([14, 10]);
             printCtx.beginPath();
             printCtx.moveTo(marginX + targetW, marginY);
-            printCtx.lineTo(marginX + targetW, marginY + targetH);
+            printCtx.lineTo(marginX + targetW, marginY + boxH);
             printCtx.stroke();
+            printCtx.setLineDash([]);
 
-            previewArea.style.display = "block";
-            printBtn.style.display = "block";
+            // Scissors icon on the cut line
+            printCtx.font = "48px sans-serif";
+            printCtx.textAlign = "center";
+            printCtx.fillStyle = "#000000";
+            printCtx.save();
+            printCtx.translate(marginX + targetW, marginY + 20);
+            printCtx.rotate(Math.PI / 2);
+            printCtx.fillText("✂️", 0, 0);
+            printCtx.restore();
+            printCtx.textAlign = "left";
 
         } catch (e) {
             console.error("Cropping boundary error.", e);
-            alert("Crop error — dobara select karke try karein.");
+            alert("Crop error — check the PDF and try again.");
+        }
+    }
+
+    // ============================================================
+    // SUPABASE QUEUE PRINTING
+    //
+    // Flow: crop the E-Aadhaar → upload the finished A4 sheet to Supabase
+    // Storage → insert a row into the "orders" table → print_server.py's
+    // background engine (already polling that table every few seconds)
+    // picks it up and spools it straight to the dedicated Aadhaar printer.
+    // No local print server or QZ Tray needed on this page anymore.
+    //
+    // ⚠️ Only the PUBLIC/anon key belongs here — it's safe to expose in the
+    // browser (it's the same "sb_publishable_..." key from config.py, never
+    // the Razorpay secret or a service-role Supabase key).
+    // ============================================================
+
+    const SUPABASE_URL = "https://irqlvuphoblgjqysteto.supabase.co";
+    const SUPABASE_ANON_KEY = "sb_publishable_-8iwefgyZfbxfF93ZjcFbw_G09EA3U-";
+    const STORAGE_BUCKET = "orders";               // must exist in Supabase Storage, set to Public
+    const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
+
+    const printModeNote = document.getElementById('printModeNote');
+
+    async function sendToPrintQueue() {
+        const printBtnEl = document.getElementById('printBtn');
+        const printerChoice = document.getElementById('printerChoice').value; // aadhaar / color / bw / passport
+        const customerName = document.getElementById('customerName').value.trim();
+
+        printBtnEl.disabled = true;
+        printBtnEl.innerText = "☁️ Uploading...";
+
+        try {
+            // 1) Turn the cropped A4 canvas into a PNG blob.
+            const blob = await new Promise(res => printCanvas.toBlob(res, 'image/png'));
+
+            // 2) Upload it to Supabase Storage under a unique filename.
+            const fileName = `aadhaar/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.png`;
+            const { error: uploadError } = await supabaseClient
+                .storage
+                .from(STORAGE_BUCKET)
+                .upload(fileName, blob, { contentType: 'image/png', upsert: false });
+            if (uploadError) throw new Error("Upload failed: " + uploadError.message);
+
+            // 3) Get its public URL — this is what print_server.py downloads
+            //    and spools to the hardware printer.
+            const { data: urlData } = supabaseClient.storage.from(STORAGE_BUCKET).getPublicUrl(fileName);
+            const fileUrl = urlData.publicUrl;
+
+            // 4) Insert the order row. payment_status "PAID (ADMIN)" is used
+            //    because this station is staff-operated (walk-in customer
+            //    already paid at the counter) — the engine prints
+            //    "PAID (ADMIN)" / "PAID CASH" / online-paid orders straight
+            //    away without waiting on a Razorpay check.
+            const { error: orderError } = await supabaseClient
+                .from('orders')
+                .insert({
+                    customer_name: customerName || "Walk-in",
+                    print_type: printerChoice,      // "aadhaar" routes to the dedicated Aadhaar printer
+                    pages: 1,
+                    layout_mode: "1",
+                    file_url: fileUrl,
+                    payment_status: "PAID (ADMIN)",
+                    print_status: "Pending",
+                    printed: false,
+                });
+            if (orderError) throw new Error("Queue insert failed: " + orderError.message);
+
+            printModeNote.textContent = "✅ Sent to the print queue — the Aadhaar printer will print it automatically within a few seconds.";
+            printBtnEl.innerText = "✅ Sent to Printer Queue";
+
+        } catch (e) {
+            console.error("Queue print failed:", e);
+            printModeNote.textContent = "⚠️ Could not reach the print queue (" + e.message + "). Falling back to the normal print dialog.";
+            window.print();
+            printBtnEl.innerText = "🖨️ 3. Send to Aadhaar Printer";
+        } finally {
+            printBtnEl.disabled = false;
         }
     }
 </script>
