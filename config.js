@@ -4,10 +4,10 @@
 
 const SITE_CONFIG = {
     // 🔗 Aapka Supabase URL (Bina kisi extra slash ke)
-    SUPABASE_URL: "https://irqlvuphoblgjqysteto.supabase.co",
+    SUPABASE_URL: "https://nmjajotbgtgwtxkclozt.supabase.co",
     
     // 🔑 Aapki Supabase Anon/Publishable Key
-    SUPABASE_KEY: "sb_publishable_-8iwefgyZfbxfF93ZjcFbw_G09EA3U-",
+    SUPABASE_KEY: "sb_publishable_s5TvFNU-uQrmHeHJOC03zA_xv_5MFIC",
     
     // 🏪 Store ka naam jo Admin Dashboard par bada-bada dikhega
     STORE_NAME: "Print Shop Admin Control Panel"
