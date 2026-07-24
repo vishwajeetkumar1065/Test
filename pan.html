@@ -962,7 +962,7 @@ async function submitID() {
             return; 
         }
 
-        const publicUrl = client.storage.from("documents").getPublicUrl(fileName).data.publicUrl;
+        const publicUrl = fileName; // storage PATH, not a public link — bucket is private; admin.html signs a short-lived URL for staff
         let baseRate = isBw ? 5 : 10;
         let totalAmountCalculation = copiesInput * baseRate;
 

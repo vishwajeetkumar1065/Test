@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Staff Login</title>
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <script src="config.js"></script>
+    <style>
+        * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        body { background: #f4f6f9; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+        .card { background: #fff; max-width: 360px; width: 100%; padding: 30px; border-radius: 12px; box-shadow: 0 4px 20px rgba(0,0,0,0.08); }
+        h2 { color: #1976d2; margin-top: 0; text-align: center; }
+        input { width: 100%; padding: 12px; margin-bottom: 12px; border: 1px solid #ccc; border-radius: 6px; font-size: 14px; }
+        button { width: 100%; padding: 12px; background: #1976d2; color: #fff; border: none; border-radius: 6px; font-weight: bold; cursor: pointer; font-size: 15px; }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        #errorMsg { color: #c0392b; font-size: 13px; text-align: center; min-height: 18px; margin-bottom: 8px; }
+    </style>
+</head>
+<body>
+
+<div class="card">
+    <h2>🔒 Staff Login</h2>
+    <p id="errorMsg"></p>
+    <input type="email" id="email" placeholder="Staff email" autocomplete="username">
+    <input type="password" id="password" placeholder="Password" autocomplete="current-password">
+    <button id="loginBtn" onclick="login()">Sign In</button>
+</div>
+
+<script>
+    const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
+
+    // If already logged in, skip straight to the panel this login was requested for.
+    const returnTo = new URLSearchParams(window.location.search).get("returnTo") || "admin.html";
+    client.auth.getSession().then(({ data }) => {
+        if (data.session) window.location.href = returnTo;
+    });
+
+    async function login() {
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+        const errorMsg = document.getElementById("errorMsg");
+        const loginBtn = document.getElementById("loginBtn");
+
+        errorMsg.textContent = "";
+        if (!email || !password) {
+            errorMsg.textContent = "Enter your email and password.";
+            return;
+        }
+
+        loginBtn.disabled = true;
+        loginBtn.textContent = "Signing in...";
+
+        const { error } = await client.auth.signInWithPassword({ email, password });
+
+        if (error) {
+            errorMsg.textContent = "Login failed: " + error.message;
+            loginBtn.disabled = false;
+            loginBtn.textContent = "Sign In";
+            return;
+        }
+
+        window.location.href = returnTo;
+    }
+
+    document.getElementById("password").addEventListener("keydown", (e) => {
+        if (e.key === "Enter") login();
+    });
+</script>
+</body>
+</html>

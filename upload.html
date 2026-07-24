@@ -813,11 +813,11 @@ function calculate() {
 // 👑 SUBMIT ORDER (MIXED FILES MERGE & SAVE)
 // ==========================================
 async function submitOrder() {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('admin') === 'vishu') {
-        sessionStorage.setItem('adminMode', 'true');
-    }
-    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
+    // NOTE: the old ?admin=vishu bypass has been removed — it let anyone who
+    // viewed page source skip payment entirely. Shop-side free/direct prints
+    // now go through the authenticated admin.html panel instead (see
+    // login.html), never through a magic URL a customer could type in.
+    const isAdmin = false;
 
     const lastOrderTime = localStorage.getItem("last_order_time");
     if (!isAdmin && lastOrderTime && (Date.now() - parseInt(lastOrderTime)) < 60000) { 
@@ -938,7 +938,7 @@ async function submitOrder() {
             customer_name: name || (isAdmin ? "Shop Admin" : "Guest"),
             mobile: mobile || "N/A", 
             pages: copies, print_type: printStr, amount: amount,
-            file_url: client.storage.from("documents").getPublicUrl(fileName).data.publicUrl, 
+            file_url: fileName, // storage PATH, not a public link — bucket is private now; admin.html signs a short-lived URL when staff need to view it
             payment_status: finalPaymentStatus, 
             payment_id: finalPaymentId,
             layout_mode: layoutVal

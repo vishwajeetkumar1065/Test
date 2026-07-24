@@ -20,6 +20,7 @@
             background-color: #f4f6f9;
             color: #333;
             padding: 20px;
+            visibility: hidden; /* shown only after the login check passes */
         }
 
         .dashboard-container {
@@ -139,6 +140,7 @@
         <div style="display: flex; align-items: center; gap: 15px;">
             <span class="auto-print-badge">🟢 AUTO-PRINT VIA PYTHON ROUTER</span>
             <button class="refresh-btn" onclick="fetchOrders()">🔄 Refresh Orders</button>
+            <button class="refresh-btn" style="background-color:#6c757d;" onclick="client.auth.signOut()">🚪 Log Out</button>
         </div>
     </div>
 
@@ -171,13 +173,31 @@
     pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
     const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-    window.onload = function() {
+    // 🔒 AUTH GUARD — this page shows customer names, phone numbers, and
+    // links to their uploaded ID documents, so it must never be reachable
+    // without a real staff login. Bounce to login.html if there's no
+    // session; the RLS policies in the DB back this up so even someone
+    // skipping this check via devtools still can't read the data.
+    (async function requireAuth() {
+        const { data } = await client.auth.getSession();
+        if (!data.session) {
+            window.location.href = "login.html?returnTo=admin.html";
+            return;
+        }
+        document.body.style.visibility = "visible";
+        startDashboard();
+    })();
+    client.auth.onAuthStateChange((event) => {
+        if (event === "SIGNED_OUT") window.location.href = "login.html?returnTo=admin.html";
+    });
+
+    function startDashboard() {
         if(window.SITE_CONFIG.STORE_NAME) {
             document.getElementById("dashboardTitle").innerText = window.SITE_CONFIG.STORE_NAME;
         }
         fetchOrders();
-        setInterval(fetchOrders, 5000); 
-    };
+        setInterval(fetchOrders, 5000);
+    }
 
     async function fetchOrders() {
         const tableBody = document.getElementById("ordersTableBody");
@@ -199,7 +219,7 @@
 
         tableBody.innerHTML = ""; 
 
-        orders.forEach(order => {
+        for (const order of orders) {
             const row = document.createElement("tr");
             
             let formattedTimeStr = "N/A";
@@ -241,24 +261,41 @@
             // 🟢 CORES REMOVED: Automatic web iframe printing loop completely blocked.
             // Python handles hardware pipelines now so browser printing is disabled.
 
+            // Stored values are STORAGE PATHS now (bucket is private), so sign
+            // each one into a 5-minute link, viewable only by this logged-in
+            // staff session — never a permanent public URL.
+            const sign = async (path) => {
+                if (!path) return null;
+                const { data, error } = await client.storage.from("documents").createSignedUrl(path, 300);
+                return error ? null : data.signedUrl;
+            };
+
             let actionsHtml = "";
-            
+
             // Checking if the layout explicitly carries a combined A4 format matrix label
             const printTypeLabel = (order.print_type || '').toLowerCase();
             if (printTypeLabel.includes("document id") || printTypeLabel.includes("single id")) {
                 if (order.file_url) {
-                    actionsHtml += `<a href="${order.file_url}" target="_blank" class="action-btn print-btn" style="background-color: #28a745;">👁️ View Combined A4 ID</a>`;
-                    actionsHtml += `<a href="${order.file_url}" download class="action-btn download-btn">📥 Download</a>`;
+                    const signedUrl = await sign(order.file_url);
+                    if (signedUrl) {
+                        actionsHtml += `<a href="${signedUrl}" target="_blank" class="action-btn print-btn" style="background-color: #28a745;">👁️ View Combined A4 ID</a>`;
+                        actionsHtml += `<a href="${signedUrl}" download class="action-btn download-btn">📥 Download</a>`;
+                    }
                 } else if (order.front_url) {
-                    actionsHtml += `<a href="${order.front_url}" target="_blank" class="action-btn print-btn">👁️ View Front</a>`;
+                    const frontUrl = await sign(order.front_url);
+                    if (frontUrl) actionsHtml += `<a href="${frontUrl}" target="_blank" class="action-btn print-btn">👁️ View Front</a>`;
                     if (order.back_url) {
-                        actionsHtml += `<a href="${order.back_url}" target="_blank" class="action-btn print-btn" style="background-color: #6f42c1;">👁️ View Back</a>`;
+                        const backUrl = await sign(order.back_url);
+                        if (backUrl) actionsHtml += `<a href="${backUrl}" target="_blank" class="action-btn print-btn" style="background-color: #6f42c1;">👁️ View Back</a>`;
                     }
                 }
             } else {
                 if (trueTargetRawSourceUrl) {
-                    actionsHtml += `<a href="${trueTargetRawSourceUrl}" target="_blank" class="action-btn print-btn">👁️ View File</a>`;
-                    actionsHtml += `<a href="${trueTargetRawSourceUrl}" download class="action-btn download-btn">📥 Download</a>`;
+                    const signedUrl = await sign(trueTargetRawSourceUrl);
+                    if (signedUrl) {
+                        actionsHtml += `<a href="${signedUrl}" target="_blank" class="action-btn print-btn">👁️ View File</a>`;
+                        actionsHtml += `<a href="${signedUrl}" download class="action-btn download-btn">📥 Download</a>`;
+                    }
                 }
             }
 
@@ -284,7 +321,7 @@
             `;
 
             tableBody.appendChild(row);
-        });
+        }
     }
 
     async function markAsPaid(orderId) {

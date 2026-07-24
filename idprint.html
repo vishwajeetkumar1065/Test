@@ -894,12 +894,10 @@ function generateMergedA4Blob() {
 // 👑 SUBMIT ORDER (WITH SECRET ADMIN MODE)
 // ==========================================
 async function submitID() {
-    // 👑 1. ADMIN MODE CHECK
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('admin') === 'vishu') {
-        sessionStorage.setItem('adminMode', 'true');
-    }
-    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
+    // NOTE: the old ?admin=vishu bypass has been removed — it let anyone who
+    // viewed page source skip payment entirely. Shop-side free/direct prints
+    // now go through the authenticated admin.html panel instead.
+    const isAdmin = false;
 
     // 🟢 2. SPAM PROTECTION (Admin ko wait nahi karna padega)
     const lastOrderTime = localStorage.getItem("last_order_time");
@@ -951,7 +949,7 @@ async function submitID() {
         return; 
     }
 
-    const publicUrl = client.storage.from("documents").getPublicUrl(fileName).data.publicUrl;
+    const publicUrl = fileName; // storage PATH, not a public link — bucket is private; admin.html signs a short-lived URL for staff
     let baseRate = isBw ? 5 : 10;
     let totalAmountCalculation = copiesInput * baseRate;
 

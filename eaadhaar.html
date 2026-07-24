@@ -18,7 +18,7 @@
 
     <style>
         * { box-sizing: border-box; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        body { background: #1e1e2e; color: #cdd6f4; padding: 20px; text-align: center; margin: 0; }
+        body { background: #1e1e2e; color: #cdd6f4; padding: 20px; text-align: center; margin: 0; visibility: hidden; }
         
         .admin-panel { max-width: 800px; margin: auto; background: #313244; padding: 25px; border-radius: 12px; box-shadow: 0 4px 15px rgba(0,0,0,0.5); }
         h2 { color: #a6e3a1; margin-top: 0; font-size: 24px; text-transform: uppercase; letter-spacing: 1px; }
@@ -268,6 +268,18 @@
     const STORAGE_BUCKET = "documents";               // must exist in Supabase Storage, set to Public
     const supabaseClient = supabase.createClient(SUPABASE_URL, SUPABASE_ANON_KEY);
 
+    // 🔒 AUTH GUARD — this station inserts orders as already "PAID (ADMIN)",
+    // so it must only be usable by a logged-in staff member, never by a
+    // customer who happens to open this URL. Backed by RLS in the DB too.
+    (async function requireAuth() {
+        const { data } = await supabaseClient.auth.getSession();
+        if (!data.session) {
+            window.location.href = "login.html?returnTo=eaadhaar.html";
+        } else {
+            document.body.style.visibility = "visible";
+        }
+    })();
+
     const printModeNote = document.getElementById('printModeNote');
 
     async function sendToPrintQueue() {
@@ -290,10 +302,11 @@
                 .upload(fileName, blob, { contentType: 'image/png', upsert: false });
             if (uploadError) throw new Error("Upload failed: " + uploadError.message);
 
-            // 3) Get its public URL — this is what print_server.py downloads
-            //    and spools to the hardware printer.
-            const { data: urlData } = supabaseClient.storage.from(STORAGE_BUCKET).getPublicUrl(fileName);
-            const fileUrl = urlData.publicUrl;
+            // 3) Store the storage PATH, not a public URL — the bucket is
+            //    private now. print_server.py should authenticate with a
+            //    service-role key and either download the object directly
+            //    or generate its own signed URL from this path.
+            const fileUrl = fileName;
 
             // 4) Insert the order row. payment_status "PAID (ADMIN)" is used
             //    because this station is staff-operated (walk-in customer
