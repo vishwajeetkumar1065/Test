@@ -85,6 +85,10 @@
 <script src="config.js"></script>
 
 <script>
+    // billingAmount is used for DISPLAY ONLY. The amount actually charged is
+    // decided server-side by create-razorpay-order, which reads it fresh
+    // from the `orders` row — editing localStorage no longer changes what
+    // you pay.
     const billingAmount = localStorage.getItem("amount") || "0";
     const targetOrderId = localStorage.getItem("current_order_id");
 
@@ -102,50 +106,75 @@
     async function openRazorpayCheckout(e) {
         e.preventDefault();
 
-        const amountInPaise = parseFloat(billingAmount) * 100;
-        let updateFired = false;
+        const payBtn = e.target.closest("button");
+        if (payBtn) { payBtn.disabled = true; payBtn.innerText = "Starting secure checkout..."; }
 
-        // 🚀 CORRECTED: .execute() hata kar standard format me background sync trigger kiya
+        // 1) Ask our server to open a Razorpay order for the REAL amount on file.
+        let session;
         try {
-            await client.from("orders").update({ payment_status: "Processing" }).eq("id", targetOrderId);
+            const { data, error } = await client.functions.invoke("create-razorpay-order", {
+                body: { order_id: targetOrderId }
+            });
+            if (error || !data || data.error) throw new Error((data && data.error) || error?.message || "Could not start checkout");
+            session = data;
         } catch (err) {
-            console.error("Initial processing state update skip", err);
+            alert("Could not start payment: " + err.message);
+            if (payBtn) { payBtn.disabled = false; payBtn.innerText = "💳 PAY ONLINE NOW"; }
+            return;
         }
 
+        let settled = false;
+
         const options = {
-            "key": "rzp_live_T6wxJ6u8vpDN2u", 
-            "amount": amountInPaise.toString(),
-            "currency": "INR",
+            "key": session.key_id,
+            "order_id": session.razorpay_order_id, // locks amount+currency server-side
+            "amount": session.amount.toString(),
+            "currency": session.currency,
             "name": window.SITE_CONFIG.STORE_NAME || "Digital Print Shop",
             "description": "Payment for Order #" + targetOrderId,
-            "notes": {
-                "current_order_id": targetOrderId
-            },
+            "notes": { "current_order_id": targetOrderId },
             "modal": {
                 "ondismiss": function() {
                     console.log("Checkout overlay sheets dismissed.");
+                    if (payBtn) { payBtn.disabled = false; payBtn.innerText = "💳 PAY ONLINE NOW"; }
                 }
             },
+            // 2) Never trust this callback by itself — hand it to the server
+            //    to verify the signature before treating the order as paid.
             "handler": async function (response) {
-                if (updateFired) return;
-                updateFired = true;
+                if (settled) return;
+                settled = true;
 
                 const preventClose = (event) => {
                     event.preventDefault();
-                    event.returnValue = "Locking print session...";
+                    event.returnValue = "Verifying your payment...";
                 };
                 window.addEventListener("beforeunload", preventClose);
 
                 try {
-                    await client.from("orders").update({ payment_status: "Success" }).eq("id", targetOrderId);
+                    const { data, error } = await client.functions.invoke("verify-razorpay-payment", {
+                        body: {
+                            order_id: targetOrderId,
+                            razorpay_order_id: response.razorpay_order_id,
+                            razorpay_payment_id: response.razorpay_payment_id,
+                            razorpay_signature: response.razorpay_signature
+                        }
+                    });
+                    window.removeEventListener("beforeunload", preventClose);
+
+                    if (error || !data || data.error || !data.success) {
+                        alert("We couldn't verify your payment automatically. If money was deducted, please show this screen at the counter.");
+                        if (payBtn) { payBtn.disabled = false; payBtn.innerText = "💳 PAY ONLINE NOW"; }
+                        return;
+                    }
+
                     localStorage.setItem("last_payment_method", "Razorpay Gateway");
                     localStorage.setItem("payment_id", response.razorpay_payment_id || "");
-                    window.removeEventListener("beforeunload", preventClose);
                     window.location.href = "success.html";
                 } catch (err) {
-                    localStorage.setItem("payment_id", response.razorpay_payment_id || "");
                     window.removeEventListener("beforeunload", preventClose);
-                    window.location.href = "success.html";
+                    alert("We couldn't verify your payment automatically. If money was deducted, please show this screen at the counter.");
+                    if (payBtn) { payBtn.disabled = false; payBtn.innerText = "💳 PAY ONLINE NOW"; }
                 }
             },
             "theme": { "color": "#3399cc" }
@@ -153,25 +182,6 @@
 
         const rzp = new Razorpay(options);
         rzp.open();
-
-        // ⏱️ SILENT BACKGROUND POLLER 
-        const silentPoller = setInterval(async () => {
-            if (updateFired) {
-                clearInterval(silentPoller);
-                return;
-            }
-            
-            if (rzp && rzp.checkout && rzp.checkout.closed === false) {
-                try {
-                    const { data } = await client.from("orders").select("payment_status").eq("id", targetOrderId).single();
-                    if (data && (data.payment_status === "Success" || data.payment_status === "Paid")) {
-                        updateFired = true;
-                        clearInterval(silentPoller);
-                        window.location.href = "success.html";
-                    }
-                } catch(e) {}
-            }
-        }, 1500);
     }
 
     // 🏦 OPTION 2: CASH AT COUNTER BACKEND REGISTRATION FLOW
