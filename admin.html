@@ -267,10 +267,15 @@
             const isIdCardOrder = order.front_url && order.front_url !== "";
             const trueTargetRawSourceUrl = isIdCardOrder ? order.front_url : order.file_url;
 
+            // 🟢 Direct URL handle karne ke liye fixed function
             const sign = async (path) => {
                 if (!path) return null;
-                const { data, error } = await client.storage.from("documents").createSignedUrl(path, 300);
-                return error ? null : data.signedUrl;
+                // Agar pehle se poora http URL saved hai, toh wahi wapas kar do
+                if (path.startsWith("http")) return path;
+                
+                // Nahi toh public URL generate kar lo
+                const { data } = client.storage.from("documents").getPublicUrl(path);
+                return data ? data.publicUrl : null;
             };
 
             let actionsHtml = "";
