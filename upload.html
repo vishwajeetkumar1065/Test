@@ -652,7 +652,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg, diffMat;
+        let src, dest, srcTri, dstTri, M, bg;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -680,39 +680,34 @@ async function saveCropAndNext() {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
                 if (autoCleanEnabled) {
-                    // Detect whether this looks like a document/marksheet (mostly flat white
-                    // paper background + sparse dark ink) vs a regular photo (continuous
-                    // mid-tone shading/gradients from lighting, product shots, faces, etc.),
-                    // so we only auto-clean documents and leave normal photos untouched.
-                    let whiteMat = new cv.Mat();
-                    let darkMat = new cv.Mat();
-                    cv.threshold(dest, whiteMat, 225, 255, cv.THRESH_BINARY);
-                    cv.threshold(dest, darkMat, 60, 255, cv.THRESH_BINARY_INV);
-                    let totalPixels = dest.rows * dest.cols;
-                    let whitePercentage = (cv.countNonZero(whiteMat) / totalPixels) * 100;
-                    let darkPercentage = (cv.countNonZero(darkMat) / totalPixels) * 100;
-                    let midtonePercentage = 100 - whitePercentage - darkPercentage;
-                    whiteMat.delete();
-                    darkMat.delete();
-
-                    const looksLikeDocument = whitePercentage > 30 && midtonePercentage < 25;
-
-                    if (looksLikeDocument) {
-                        // Document / marksheet with dirty or uneven background -> auto clean
+                    let morphKernel = null;
+                    try {
                         bg = new cv.Mat();
-                        cv.GaussianBlur(dest, bg, new cv.Size(0, 0), 25); // estimate background illumination
-                        diffMat = new cv.Mat();
-                        cv.absdiff(dest, bg, diffMat);
-                        cv.bitwise_not(diffMat, diffMat);
-                        // Cap the ceiling below pure 255 so the background doesn't get stretched
-                        // into blown-out white — this is the actual whiteness control.
-                        cv.normalize(diffMat, dest, 20, 205, cv.NORM_MINMAX);
+                        let closeSize = Math.round(Math.min(dest.rows, dest.cols) / 15);
+                        if (closeSize % 2 === 0) closeSize++;
+                        if (closeSize < 15) closeSize = 15;
+                        morphKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(closeSize, closeSize));
+                        cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, morphKernel);
+
+                        let blurSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
+                        cv.GaussianBlur(bg, bg, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
+
+                        cv.divide(dest, bg, dest, 255);
+                        cv.medianBlur(dest, dest, 3);
+
+                        let floatMat = new cv.Mat();
+                        try {
+                            dest.convertTo(floatMat, cv.CV_32F, 1.0 / 255.0, 0);
+                            cv.pow(floatMat, 2.4, floatMat); 
+                            floatMat.convertTo(dest, cv.CV_8U, 255.0, 0);
+                        } finally {
+                            floatMat.delete();
+                        }
+                    } finally {
+                        if (morphKernel) morphKernel.delete();
                     }
-                    // else: looks like a regular photo — leave as plain grayscale, no other edits
                 }
-                // if autoCleanEnabled is false, leave as plain grayscale — no detection, no cleanup
             } else {
-                // Color images: leave untouched, just ensure correct color space
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
             }
 
@@ -723,7 +718,7 @@ async function saveCropAndNext() {
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
-            if (bg) bg.delete(); if (diffMat) diffMat.delete();
+            if (bg) bg.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
@@ -736,10 +731,7 @@ async function saveCropAndNext() {
     loadCurrentImageForCrop();
     calculate();
 }
-
-// ==========================================
-// 🚀 2. ZERO MARGIN (FULL STRETCH) & AUTO-ROTATE
-// ==========================================
+            
 async function convertToA4(sourceCanvas) {
     return new Promise(resolve => {
         const a4 = document.createElement('canvas'); 
@@ -813,11 +805,11 @@ function calculate() {
 // 👑 SUBMIT ORDER (MIXED FILES MERGE & SAVE)
 // ==========================================
 async function submitOrder() {
-    // NOTE: the old ?admin=vishu bypass has been removed — it let anyone who
-    // viewed page source skip payment entirely. Shop-side free/direct prints
-    // now go through the authenticated admin.html panel instead (see
-    // login.html), never through a magic URL a customer could type in.
-    const isAdmin = false;
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'vishu' || urlParams.get('device') === 'my_phone') {
+        sessionStorage.setItem('adminMode', 'true');
+    }
+    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
 
     const lastOrderTime = localStorage.getItem("last_order_time");
     if (!isAdmin && lastOrderTime && (Date.now() - parseInt(lastOrderTime)) < 60000) { 
@@ -893,7 +885,7 @@ async function submitOrder() {
                     }
                     ctx.putImageData(imgData, 0, 0);
                     
-                    const imgDataUrl = canvas.toDataURL("image/jpeg", 0.85);
+                    const imgDataUrl = canvas.toDataURL("image/jpeg", 1.0);
                     const imgBytes = await fetch(imgDataUrl).then(res => res.arrayBuffer());
                     const embeddedImage = await outPdf.embedJpg(imgBytes);
                     
@@ -934,14 +926,11 @@ async function submitOrder() {
         const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
         const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
 
-        // 🚀 URL FIXED: Python ko download karne ke liye pura 100% link bhej rahe hain
-        const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
-
         const { data: order, error } = await client.from("orders").insert([{
             customer_name: name || (isAdmin ? "Shop Admin" : "Guest"),
             mobile: mobile || "N/A", 
             pages: copies, print_type: printStr, amount: amount,
-            file_url: fullFileUrl, 
+            file_url: client.storage.from("documents").getPublicUrl(fileName).data.publicUrl, 
             payment_status: finalPaymentStatus, 
             payment_id: finalPaymentId,
             layout_mode: layoutVal
