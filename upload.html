@@ -136,44 +136,7 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-// 🔒 SECURE ADMIN CHECK: URL parameter hata diya gaya hai. 
-// Ab admin mode sirf tabhi activate hoga jab aap browser mein secret code dalengi.
-// Aap apne phone se ek baar console mein ya page par secret trigger use kar sakti hain.
-// Ya fir hum ek hidden click trigger bana dete hain.
-
-(function checkAdminSecret() {
-    const urlParams = new URLSearchParams(window.location.search);
-    // Agar URL mein koi purana trick try karega toh ignore ho jayega
-    if (urlParams.get('admin') || urlParams.get('device')) {
-        // Purana URL parameter ignore kar diya
-        window.history.replaceState({}, document.title, window.location.pathname);
-    }
-})();
-
-// 🔓 Secret activate karne ka asaan tarika: 
-// Aap apne phone par page ki heading ("Upload Document") par lagataar 5 baar tap karengi, toh password box aa jayega!
-document.addEventListener('DOMContentLoaded', () => {
-    let tapCount = 0;
-    const titleEl = document.querySelector('h2');
-    if(titleEl) {
-        titleEl.style.cursor = 'pointer';
-        titleEl.addEventListener('click', () => {
-            tapCount++;
-            if(tapCount >= 5) {
-                tapCount = 0;
-                let pwd = prompt("Enter Admin Password:");
-                if(pwd === "vishu123") { // Yahan apna secret password rakh lein
-                    sessionStorage.setItem('adminMode', 'true');
-                    alert("👑 Owner Mode Activated on this device!");
-                } else if(pwd) {
-                    alert("❌ Incorrect Password!");
-                }
-            }
-        });
-    }
-});
-
-// 🔍 Visible feedback while OpenCV.js loads in the background
+// 🔍 Visible feedback while OpenCV.js (used for auto-crop-detection & enhance) loads in the background
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
@@ -198,6 +161,9 @@ let processedA4Images = [];
 
 const cropEngine = { canvas: document.getElementById('cropCanvas'), ctx: document.getElementById('cropCanvas').getContext('2d'), img: null, corners: [], activeCorner: -1, rotation: 0, originalSrc: "", zoom: 1, offsetX: 0, offsetY: 0, isPanning: false, lastTouchDist: 0, lastTouchX: 0, lastTouchY: 0 };
 
+// ========================================================================
+// 🔍 ROBUST AUTO CORNER DETECTION (OpenCV.js — multi-strategy contour search)
+// ========================================================================
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -794,10 +760,13 @@ function calculate() {
 }
 
 // ==========================================
-// 👑 SUBMIT ORDER (SECURE ADMIN CHECK)
+// 👑 SUBMIT ORDER (ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitOrder() {
-    // Session storage check karega ki password enter hua hai ya nahi
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'vishu') {
+        sessionStorage.setItem('adminMode', 'true');
+    }
     const isAdmin = sessionStorage.getItem('adminMode') === 'true';
 
     const lastOrderTime = localStorage.getItem("last_order_time");
