@@ -136,7 +136,44 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-// 🔍 Visible feedback while OpenCV.js (used for auto-crop-detection & enhance) loads in the background
+// 🔒 SECURE ADMIN CHECK: URL parameter hata diya gaya hai. 
+// Ab admin mode sirf tabhi activate hoga jab aap browser mein secret code dalengi.
+// Aap apne phone se ek baar console mein ya page par secret trigger use kar sakti hain.
+// Ya fir hum ek hidden click trigger bana dete hain.
+
+(function checkAdminSecret() {
+    const urlParams = new URLSearchParams(window.location.search);
+    // Agar URL mein koi purana trick try karega toh ignore ho jayega
+    if (urlParams.get('admin') || urlParams.get('device')) {
+        // Purana URL parameter ignore kar diya
+        window.history.replaceState({}, document.title, window.location.pathname);
+    }
+})();
+
+// 🔓 Secret activate karne ka asaan tarika: 
+// Aap apne phone par page ki heading ("Upload Document") par lagataar 5 baar tap karengi, toh password box aa jayega!
+document.addEventListener('DOMContentLoaded', () => {
+    let tapCount = 0;
+    const titleEl = document.querySelector('h2');
+    if(titleEl) {
+        titleEl.style.cursor = 'pointer';
+        titleEl.addEventListener('click', () => {
+            tapCount++;
+            if(tapCount >= 5) {
+                tapCount = 0;
+                let pwd = prompt("Enter Admin Password:");
+                if(pwd === "vishu123") { // Yahan apna secret password rakh lein
+                    sessionStorage.setItem('adminMode', 'true');
+                    alert("👑 Owner Mode Activated on this device!");
+                } else if(pwd) {
+                    alert("❌ Incorrect Password!");
+                }
+            }
+        });
+    }
+});
+
+// 🔍 Visible feedback while OpenCV.js loads in the background
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
@@ -161,10 +198,6 @@ let processedA4Images = [];
 
 const cropEngine = { canvas: document.getElementById('cropCanvas'), ctx: document.getElementById('cropCanvas').getContext('2d'), img: null, corners: [], activeCorner: -1, rotation: 0, originalSrc: "", zoom: 1, offsetX: 0, offsetY: 0, isPanning: false, lastTouchDist: 0, lastTouchX: 0, lastTouchY: 0 };
 
-// ========================================================================
-// 🔍 ROBUST AUTO CORNER DETECTION (OpenCV.js — multi-strategy contour search)
-// ========================================================================
-// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -175,9 +208,6 @@ function orderCornersClockwise(pts) {
     return [tl, tr, br, bl];
 }
 
-// Manually compute the 4 corners of a cv.RotatedRect (from cv.minAreaRect).
-// NOTE: cv.RotatedRect.points() is NOT a real bound method in OpenCV.js — calling
-// it throws, which silently aborts detection if wrapped in a broad try/catch.
 function rotatedRectCorners(rect) {
     const angleRad = (rect.angle * Math.PI) / 180;
     const cos = Math.cos(angleRad), sin = Math.sin(angleRad);
@@ -191,22 +221,6 @@ function rotatedRectCorners(rect) {
     }));
 }
 
-// Finds the best card/document-shaped quadrilateral in an image.
-//  - bilateralFilter: smooths busy/textured backgrounds while keeping true edges
-//  - runs several adaptive Canny threshold bands (a single fixed pair fails on
-//    glare or low-contrast backgrounds) PLUS Otsu thresholding (bright and dark
-//    variants) — a document is usually a plain, evenly-lit region, which Otsu
-//    segments far more reliably than edge detection does on textured surfaces
-//  - RETR_LIST (not RETR_EXTERNAL): still finds the document contour even if
-//    nested inside a larger background contour
-//  - approxPolyDP first, falling back to cv.minAreaRect when a contour never
-//    cleanly reduces to 4 points (common with glare/shadow-fragmented edges)
-//  - scores candidates by area * rectangularity, favoring the largest, most
-//    rectangular region — no fixed aspect-ratio assumption, since documents
-//    vary (ID cards, A4 sheets, marksheets, etc.)
-//  - every candidate is wrapped in its own try/catch so a single bad candidate
-//    can't silently abort the whole detection pass
-// Returns the 4 ordered corner points, or null if nothing usable was found.
 function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
     const w = canvasEl.width;
     const h = canvasEl.height;
@@ -218,8 +232,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
     let candidatesSeen = 0;
     let candidatesRejected = { size: 0, shape: 0, error: 0 };
 
-    // Document is usually the dominant object in frame (unlike a small ID card
-    // that might occupy only a fraction of a wider photo)
     const minArea = canvasArea * 0.15;
     const maxArea = canvasArea * 0.95;
 
@@ -275,7 +287,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
                 }
             } catch (candidateErr) {
                 candidatesRejected.error++;
-                console.warn(`[autoDetectDoc/${debugLabel}] candidate from ${label} threw:`, candidateErr);
             } finally {
                 if (hull) hull.delete();
                 cnt.delete();
@@ -301,7 +312,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
         kernel = cv.Mat.ones(5, 5, cv.CV_8U);
         const meanVal = cv.mean(blurred)[0];
 
-        // Strategy A: Canny edges at several adaptive threshold bands
         const multiplierSets = [[0.66, 1.33], [0.4, 1.6], [0.2, 2.0]];
         for (const [loMult, hiMult] of multiplierSets) {
             const lower = Math.max(0, loMult * meanVal);
@@ -315,24 +325,18 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
             dilated.delete();
         }
 
-        // Strategy B: Otsu threshold (bright regions) — most documents are a
-        // plain, evenly-lit surface, which segments as one solid blob reliably
         let otsu = new cv.Mat();
         cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
         scanContours(otsu, "otsu-bright");
         otsu.delete();
 
-        // Strategy C: inverse Otsu, in case the document is darker than its background
         let otsuInv = new cv.Mat();
         cv.threshold(blurred, otsuInv, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
         scanContours(otsuInv, "otsu-dark");
         otsuInv.delete();
 
-        console.log(`[autoDetectDoc/${debugLabel}] candidates evaluated: ${candidatesSeen}, rejected(size/shape/error): ${candidatesRejected.size}/${candidatesRejected.shape}/${candidatesRejected.error}, bestScore: ${bestScore}`);
-
         return bestQuad;
     } catch (e) {
-        console.warn(`[autoDetectDoc/${debugLabel}] detection pass failed:`, e);
         return null;
     } finally {
         [src, gray, blurred, kernel].forEach(m => {
@@ -345,7 +349,7 @@ async function handleFileSelectionChange(){
     const files = document.getElementById("file").files;
     if (!files || files.length === 0) return;
 
-    let maxSizeInBytes = 20 * 1024 * 1024; // 20 MB
+    let maxSizeInBytes = 20 * 1024 * 1024;
     for (let i = 0; i < files.length; i++) {
         if (files[i].size > maxSizeInBytes) {
             alert(`⚠️ Error: "${files[i].name}" bahut badi file hai! Kripya 20MB se choti file upload karein.`);
@@ -380,7 +384,7 @@ async function handleFileSelectionChange(){
     if (uploadedImagesList.length > 0) {
         document.getElementById("pdfUI").style.display = "none";
         document.getElementById("imageUI").style.display = "block";
-        document.getElementById("docTypeGroup").style.display = "none"; // 🚀 HIDDEN
+        document.getElementById("docTypeGroup").style.display = "none";
         document.getElementById("cropPreviewContainer").style.display = "none";
         document.getElementById("cropAreaWrapper").style.display = "block";
         
@@ -445,9 +449,6 @@ function loadCurrentImageForCrop() {
             cropEngine.corners = defaultCorners;
 
             if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
-                // ========================================================
-                // 🔍 ROBUST CORNER AUTO-DETECT (multi-strategy)
-                // ========================================================
                 if (detectStatusEl) {
                     detectStatusEl.textContent = '🔍 Detecting document edges...';
                     detectStatusEl.style.color = '#888';
@@ -465,7 +466,6 @@ function loadCurrentImageForCrop() {
                         detectStatusEl.style.color = '#e65100';
                     }
                 } catch (err) {
-                    console.warn("Auto-Detect fail hua.", err);
                     if (detectStatusEl) {
                         detectStatusEl.textContent = 'ℹ️ Could not auto-detect — please drag corners manually';
                         detectStatusEl.style.color = '#e65100';
@@ -572,7 +572,6 @@ function rotateImage() {
             cropEngine.img = rotatedImg;
             cropEngine.corners = [{x:30, y:30}, {x:400-30, y:30}, {x:400-30, y:cropEngine.canvas.height-30}, {x:30, y:cropEngine.canvas.height-30}];
 
-            // Re-run auto-detect since orientation changed
             if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
                 const detectStatusEl = document.getElementById("cropDetectStatus");
                 try {
@@ -587,9 +586,7 @@ function rotateImage() {
                         detectStatusEl.textContent = 'ℹ️ Could not auto-detect — please drag corners manually';
                         detectStatusEl.style.color = '#e65100';
                     }
-                } catch (err) {
-                    console.warn("Auto-Detect fail hua (rotate).", err);
-                }
+                } catch (err) {}
             }
 
             drawCrop();
@@ -613,9 +610,6 @@ function drawCrop() {
     s.corners.forEach(c => { s.ctx.fillStyle = '#28a745'; s.ctx.beginPath(); s.ctx.arc(c.x, c.y, 14, 0, Math.PI * 2); s.ctx.fill(); s.ctx.strokeStyle = '#fff'; s.ctx.lineWidth = 3; s.ctx.stroke(); });
 }
 
-// ==========================================
-// 🚀 1. SUPER-FAST CROP & FILTER ENGINE (OPENCV)
-// ==========================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
     
@@ -713,7 +707,6 @@ async function saveCropAndNext() {
 
             cv.imshow(hCvs, dest);
         } catch (e) { 
-            console.warn("CV Error", e); 
             hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
@@ -800,15 +793,11 @@ function calculate() {
     document.getElementById("total").innerHTML = "Total: ₹" + (sheets * price * copies);
 }
 
-
 // ==========================================
-// 👑 SUBMIT ORDER (MIXED FILES MERGE & SAVE)
+// 👑 SUBMIT ORDER (SECURE ADMIN CHECK)
 // ==========================================
 async function submitOrder() {
-    const urlParams = new URLSearchParams(window.location.search);
-    if (urlParams.get('admin') === 'vishu' || urlParams.get('device') === 'my_phone') {
-        sessionStorage.setItem('adminMode', 'true');
-    }
+    // Session storage check karega ki password enter hua hai ya nahi
     const isAdmin = sessionStorage.getItem('adminMode') === 'true';
 
     const lastOrderTime = localStorage.getItem("last_order_time");
@@ -844,10 +833,8 @@ async function submitOrder() {
         let finalMime = "application/pdf";
         let layoutVal = document.getElementById("layout_mode") ? document.getElementById("layout_mode").value : 1;
 
-        // MASTER PDF FOR COMBINING
         const outPdf = await PDFLib.PDFDocument.create();
         
-        // 1. ADD CROPPED IMAGES
         if (processedA4Images.length > 0) {
             for (let dataUrl of processedA4Images) {
                 const imgBytes = await fetch(dataUrl).then(res => res.arrayBuffer());
@@ -857,7 +844,6 @@ async function submitOrder() {
             }
         }
 
-        // 2. ADD PDF PAGES
         if (uploadedPdfFile) {
             const srcPdfDoc = await PDFLib.PDFDocument.load(await uploadedPdfFile.arrayBuffer());
             let pagesSel = parsePageSelection(document.getElementById("pages").value);
