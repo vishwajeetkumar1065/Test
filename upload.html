@@ -934,11 +934,14 @@ async function submitOrder() {
         const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
         const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
 
+        // 🚀 URL FIXED: Python ko download karne ke liye pura 100% link bhej rahe hain
+        const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
+
         const { data: order, error } = await client.from("orders").insert([{
             customer_name: name || (isAdmin ? "Shop Admin" : "Guest"),
             mobile: mobile || "N/A", 
             pages: copies, print_type: printStr, amount: amount,
-            file_url: fileName, // storage PATH, not a public link — bucket is private now; admin.html signs a short-lived URL when staff need to view it
+            file_url: fullFileUrl, 
             payment_status: finalPaymentStatus, 
             payment_id: finalPaymentId,
             layout_mode: layoutVal
