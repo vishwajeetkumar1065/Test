@@ -916,6 +916,10 @@ function generateMergedA4Blob() {
 // ==========================================
 // 📝 SUBMIT ORDER (NAME & MOBILE ARE OPTIONAL)
 // ==========================================
+
+       // ==========================================
+// 📝 SUBMIT ORDER (NAME & MOBILE ARE OPTIONAL)
+// ==========================================
 async function submitID() {
     // 🟢 INPUT SANITIZATION (same guard-rails as the ID Card tool)
     const rawName = document.getElementById("name").value.trim();
@@ -962,14 +966,7 @@ async function submitID() {
             return; 
         }
 
-        const publicUrl = fileName; // storage PATH, not a public link — bucket is private; admin.html signs a short-lived URL for staff
-        let baseRate = isBw ? 5 : 10;
-        let totalAmountCalculation = copiesInput * baseRate;
-
-        const printLabel = isBw ? "Black & White" : "Color";
-        const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
-
-        // 🚀 URL FIXED: Yahan bhi Python ke liye pura 100% link generate kar rahe hain
+        // 🚀 URL FIXED: Ekdum Clean aur Single Declaration
         const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
 
         let baseRate = isBw ? 5 : 10;
@@ -997,6 +994,7 @@ async function submitID() {
 
         window.location.href = "payment.html";
     } catch (err) {
+        console.error(err);
         submitBtn.innerText = "Submit Processing Order";
         submitBtn.disabled = false;
     }
