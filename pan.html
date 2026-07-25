@@ -969,9 +969,18 @@ async function submitID() {
         const printLabel = isBw ? "Black & White" : "Color";
         const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
 
+        // 🚀 URL FIXED: Yahan bhi Python ke liye pura 100% link generate kar rahe hain
+        const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
+
+        let baseRate = isBw ? 5 : 10;
+        let totalAmountCalculation = copiesInput * baseRate;
+
+        const printLabel = isBw ? "Black & White" : "Color";
+        const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
+
         const { data: insertedOrder, error } = await client.from("orders").insert([{
             customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
-            file_url: publicUrl, front_url: null, back_url: null, payment_status: "Pending", payment_id: ""
+            file_url: fullFileUrl, front_url: null, back_url: null, payment_status: "Pending", payment_id: ""
         }]).select();
 
         if (error) { 
