@@ -232,7 +232,6 @@ const engine = {
 engine.front.canvas = document.getElementById('frontCanvas');
 engine.front.ctx = engine.front.canvas.getContext('2d');
 
-// Helper function for aspect ratio parameters
 engine.front.renderWidth = function() { return this.renderW * this.zoom; };
 engine.front.renderHeight = function() { return this.renderH * this.zoom; };
 
@@ -284,11 +283,9 @@ function loadImageData(side, src) {
         const s = engine[side];
         s.img = img;
         
-        // 🚀 FIXED: Dynamic Aspect Ratio Canvas Scaling
-        const containerWidth = 400; // Fixed visual width of container
+        const containerWidth = 400; 
         const calculatedHeight = Math.round((img.height / img.width) * containerWidth);
         
-        // Set canvas to exact proportion of image
         s.canvas.width = containerWidth;
         s.canvas.height = calculatedHeight;
         
@@ -300,7 +297,6 @@ function loadImageData(side, src) {
         s.offsetY = 0;
         
         const pad = 20;
-        // Fallback default corners (used if auto-detect fails or OpenCV isn't ready yet)
         s.corners = [
             { x: pad, y: pad },
             { x: containerWidth - pad, y: pad },
@@ -309,22 +305,16 @@ function loadImageData(side, src) {
         ];
         
         draw(side);
-
-        // 🔍 Auto-detect card corners using OpenCV.js as soon as it's available
         tryAutoDetectCorners(side);
     };
     img.src = src;
 }
 
-// ========================================================================
-// 🔍 AUTO CORNER DETECTION (OpenCV.js Canny + Contour detection)
-// ========================================================================
 function tryAutoDetectCorners(side, attempt) {
     attempt = attempt || 0;
     const s = engine[side];
     const statusEl = document.getElementById(`${side}DetectStatus`);
 
-    // OpenCV.js still loading in background — wait for it (max ~6s), then give up silently
     if (typeof cv === 'undefined' || !cv.Mat) {
         if (statusEl) statusEl.textContent = '⏳ Waiting for image enhancer to load...';
         if (attempt < 20) setTimeout(() => tryAutoDetectCorners(side, attempt + 1), 300);
@@ -332,12 +322,10 @@ function tryAutoDetectCorners(side, attempt) {
         return;
     }
 
-    // User may have already switched images / moved on — bail if nothing to detect
     if (!s.img) return;
 
     if (statusEl) statusEl.textContent = '🔍 Detecting card edges...';
 
-    // Let the "Detecting..." message paint before the (synchronous, can be heavy) CV work runs
     setTimeout(() => {
         const detected = autoDetectCorners(side);
         if (detected) {
@@ -353,8 +341,6 @@ function tryAutoDetectCorners(side, attempt) {
     }, 30);
 }
 
-// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
-// to match the winding order expected by projectPerspective()
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -365,30 +351,12 @@ function orderCornersClockwise(pts) {
     return [tl, tr, br, bl];
 }
 
-// Corner detection strategy:
-//  - bilateralFilter instead of GaussianBlur: smooths busy/textured backgrounds
-//    (wood, stone, fabric) while preserving the card's actual edges
-//  - multiple adaptive Canny threshold bands tried per image, instead of a single
-//    fixed pair — glare on plastic sleeves and low-contrast backgrounds often need
-//    a wider or narrower band than the standard auto-canny ratio
-//  - RETR_LIST instead of RETR_EXTERNAL: still finds the card contour even if
-//    it's nested inside a larger background contour
-//  - approxPolyDP first, with a cv.minAreaRect fallback when the contour never
-//    cleanly reduces to 4 points (common with glare-fragmented edges)
-//  - scores candidate quads by area + rectangularity + how close their
-//    aspect ratio is to a real PAN card (856:540 ≈ 1.586), instead of just
-//    picking the single largest 4-point contour
 function autoDetectCorners(side) {
     const s = engine[side];
     const dispW = s.canvas.width;
     const dispH = s.canvas.height;
-    const TARGET_RATIO = 856 / 540; // PAN card aspect ratio ~1.586
+    const TARGET_RATIO = 856 / 540;
 
-    // 🎯 ACCURACY UPGRADE 1 — detect at higher resolution than the display
-    // canvas, then scale the found corners back down. The on-screen canvas
-    // is only 400px wide (kept small for smooth dragging); that's not
-    // enough resolution for the contour/corner math to land precisely on
-    // the card's real edge, especially on higher-res phone photos.
     const nativeW = s.img.naturalWidth || s.img.width || dispW;
     const DETECT_W = Math.min(1100, Math.max(dispW, nativeW));
     const scale = DETECT_W / dispW;
@@ -419,9 +387,6 @@ function autoDetectCorners(side) {
         return { ordered, ratioError, area };
     }
 
-    // Manually compute the 4 corners of a cv.RotatedRect (from cv.minAreaRect).
-    // NOTE: cv.RotatedRect.points() is NOT a real method in OpenCV.js's bindings —
-    // calling it throws, which was silently aborting detection entirely before.
     function rotatedRectCorners(rect) {
         const angleRad = (rect.angle * Math.PI) / 180;
         const cos = Math.cos(angleRad), sin = Math.sin(angleRad);
@@ -435,15 +400,9 @@ function autoDetectCorners(side) {
         }));
     }
 
-    // Card can be a small part of the frame, but shouldn't be near-zero (noise)
-    // or the entire frame (a false "whole image" contour)
     const minArea = canvasArea * 0.03;
     const maxArea = canvasArea * 0.95;
 
-    // 🎯 ACCURACY UPGRADE 2 — collect every plausible quad ONCE across all
-    // masks (instead of accept/reject inline against one fixed tolerance).
-    // Selection tolerance is applied afterwards in tiers (see below), so
-    // the actual CV work (findContours/approxPolyDP/etc.) isn't repeated.
     function collectCandidates(binaryMat, label) {
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
@@ -517,7 +476,6 @@ function autoDetectCorners(side) {
         kernel = cv.Mat.ones(5, 5, cv.CV_8U);
         const meanVal = cv.mean(blurred)[0];
 
-        // Strategy A: Canny edges at several adaptive threshold bands
         const multiplierSets = [[0.66, 1.33], [0.4, 1.6], [0.2, 2.0]];
         for (const [loMult, hiMult] of multiplierSets) {
             const lower = Math.max(0, loMult * meanVal);
@@ -531,25 +489,16 @@ function autoDetectCorners(side) {
             dilated.delete();
         }
 
-        // Strategy B: Otsu threshold on brightness. A white/light card against
-        // a duller background (wood, stone, fabric, skin) segments as one bright
-        // blob far more reliably than edge detection does on textured surfaces.
         let otsu = new cv.Mat();
         cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
         collectCandidates(otsu, "otsu-bright");
         otsu.delete();
 
-        // Strategy C: inverse Otsu, in case the card is darker than its background
         let otsuInv = new cv.Mat();
         cv.threshold(blurred, otsuInv, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
         collectCandidates(otsuInv, "otsu-dark");
         otsuInv.delete();
 
-        // 🎯 ACCURACY UPGRADE 3 — strict-to-loose tier cascade. A tight,
-        // clean quad that closely matches the card's real aspect ratio
-        // wins over a big loose one, even if the loose one scores higher
-        // on raw area. We only fall back to a looser tier if literally
-        // nothing clean was found at that tier.
         const tiers = [
             { ratioTol: 0.12, rectTol: 0.88, label: "strict" },
             { ratioTol: 0.25, rectTol: 0.75, label: "medium" },
@@ -561,11 +510,6 @@ function autoDetectCorners(side) {
             let localBestScore = -1;
             for (const c of candidates) {
                 if (c.ratioError >= tier.ratioTol || c.rectangularity <= tier.rectTol) continue;
-                // 🎯 ACCURACY UPGRADE 3b — central bias: the card is almost
-                // always the thing the user deliberately framed in the
-                // middle of the shot, so prefer centrally-placed candidates
-                // over stray background shapes that also happen to pass
-                // the ratio/rectangularity bar.
                 const centerDist = Math.hypot(c.centroidX - cx, c.centroidY - cy) / maxCenterDist;
                 const centerBias = 1 - Math.min(1, centerDist) * 0.35;
                 const score = c.area * c.rectangularity * (1 - c.ratioError) * centerBias;
@@ -581,30 +525,18 @@ function autoDetectCorners(side) {
             }
         }
 
-        console.log(`[autoDetect/${side}] candidates: ${candidates.length}, rejected(size): ${rejectedForSize}, tier used: ${usedTierLabel || "none"}`);
-
         if (bestQuad) {
-            // 🎯 ACCURACY UPGRADE 4 — sub-pixel corner refinement. The
-            // polygon-approximation corners above are accurate to a few
-            // pixels at best; cornerSubPix nudges each one to the true
-            // local gradient intersection, visibly tightening the crop
-            // right at the card boundary. Best-effort: some opencv.js
-            // builds omit this binding, so failures are silently ignored
-            // and the un-refined quad is kept.
             try {
                 bestQuad = refineCornersSubPixel(gray, bestQuad);
             } catch (refineErr) {
                 console.warn(`[autoDetect/${side}] sub-pixel refine skipped:`, refineErr);
             }
 
-            // Scale the detected corners back down from detection
-            // resolution to the display canvas's coordinate space.
             s.corners = bestQuad.map(p => ({ x: p.x / scale, y: p.y / scale }));
             return true;
         }
         return false;
     } catch (e) {
-        console.warn(`[autoDetect/${side}] detection pass failed:`, e);
         return false;
     } finally {
         [src, gray, blurred, kernel].forEach(m => {
@@ -613,9 +545,6 @@ function autoDetectCorners(side) {
     }
 }
 
-// Nudges each corner of an approximate quad to the true local edge/gradient
-// intersection using OpenCV's iterative sub-pixel corner refinement.
-// Operates on the same grayscale Mat used for detection (pre-scale-down).
 function refineCornersSubPixel(grayMat, quad) {
     let cornersMat = new cv.Mat(4, 1, cv.CV_32FC2);
     for (let i = 0; i < 4; i++) {
@@ -702,7 +631,6 @@ function rotateImage(side) {
         const rotatedImg = new Image();
         rotatedImg.crossOrigin = "anonymous";
         rotatedImg.onload = function() {
-            // Apply new dynamic height based on rotated image
             const containerWidth = 400; 
             const calculatedHeight = Math.round((rotatedImg.height / rotatedImg.width) * containerWidth);
             
@@ -724,7 +652,6 @@ function rotateImage(side) {
                 { x: pad, y: calculatedHeight - pad }
             ];
             draw(side);
-            // Re-run auto corner detection since orientation changed
             tryAutoDetectCorners(side);
         };
         rotatedImg.src = internalCanvas.toDataURL("image/jpeg");
@@ -768,7 +695,6 @@ function projectPerspective(srcImg, corners, targetW, targetH, s) {
     hiddenCanvas.width = targetW; hiddenCanvas.height = targetH;
     const ctx = hiddenCanvas.getContext('2d');
 
-    // Mapped flawlessly using dynamic boundaries
     const p1 = [(corners[0].x - s.offsetX) / s.renderWidth(), (corners[0].y - s.offsetY) / s.renderHeight()];
     const p2 = [(corners[1].x - s.offsetX) / s.renderWidth(), (corners[1].y - s.offsetY) / s.renderHeight()];
     const p3 = [(corners[2].x - s.offsetX) / s.renderWidth(), (corners[2].y - s.offsetY) / s.renderHeight()];
@@ -836,7 +762,6 @@ function enhanceCroppedImageOnBrowser(canvasElement) {
     return canvasElement;
 }
 
-// 🚀 FIXED: Auto-scroll so the saved preview lands at the top of the viewport
 function saveSide(side) {
     const s = engine[side];
     if (!s.img) { alert(`Choose an image for ${side} first.`); return; }
@@ -864,9 +789,6 @@ function saveSide(side) {
         if(mainSaveBtn) mainSaveBtn.innerText = "Save Card";
         if(fullSaveBtn) fullSaveBtn.innerText = "Save Card";
 
-        // 📜 Auto-scroll so the freshly saved preview appears at the top of the screen.
-        // requestAnimationFrame ensures display:"block" has been painted first,
-        // so the browser measures the container's real position before scrolling.
         requestAnimationFrame(() => {
             previewContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
         });
@@ -914,14 +836,16 @@ function generateMergedA4Blob() {
 }
 
 // ==========================================
-// 📝 SUBMIT ORDER (NAME & MOBILE ARE OPTIONAL)
-// ==========================================
-
-       // ==========================================
-// 📝 SUBMIT ORDER (NAME & MOBILE ARE OPTIONAL)
+// 👑 SUBMIT ORDER (WITH ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitID() {
-    // 🟢 INPUT SANITIZATION (same guard-rails as the ID Card tool)
+    // 👑 URL se admin=vishu check karna
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'vishu') {
+        sessionStorage.setItem('adminMode', 'true');
+    }
+    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
+
     const rawName = document.getElementById("name").value.trim();
     const rawMobile = document.getElementById("mobile").value.trim();
 
@@ -933,7 +857,7 @@ async function submitID() {
         return;
     }
 
-    const finalName = name || "Guest";
+    const finalName = name || (isAdmin ? "Shop Admin" : "Guest");
     const finalMobile = mobile || "N/A";
     const copiesInput = parseInt(document.getElementById("copies").value) || 1;
     const typeSelect = document.getElementById("type").value;
@@ -966,7 +890,6 @@ async function submitID() {
             return; 
         }
 
-        // 🚀 URL FIXED: Ekdum Clean aur Single Declaration
         const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
 
         let baseRate = isBw ? 5 : 10;
@@ -975,9 +898,15 @@ async function submitID() {
         const printLabel = isBw ? "Black & White" : "Color";
         const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
 
+        // 👑 ADMIN PAYMENT STATUS LOGIC
+        const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
+        const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
+
         const { data: insertedOrder, error } = await client.from("orders").insert([{
             customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
-            file_url: fullFileUrl, front_url: null, back_url: null, payment_status: "Pending", payment_id: ""
+            file_url: fullFileUrl, front_url: null, back_url: null, 
+            payment_status: finalPaymentStatus, 
+            payment_id: finalPaymentId
         }]).select();
 
         if (error) { 
@@ -987,12 +916,19 @@ async function submitID() {
             return; 
         }
 
-        localStorage.setItem("amount", totalAmountCalculation);
-        localStorage.setItem("mobile", finalMobile);
-        localStorage.setItem("printType", "id");
-        if (insertedOrder && insertedOrder.length > 0) localStorage.setItem("current_order_id", insertedOrder[0].id); 
+        localStorage.setItem("last_order_time", Date.now());
 
-        window.location.href = "payment.html";
+        // 👑 PAYMENT PAGE BYPASS
+        if (isAdmin) {
+            alert("👑 Owner Mode: PAN Card sent directly to printer! No payment required.");
+            window.location.reload(); 
+        } else {
+            localStorage.setItem("amount", totalAmountCalculation);
+            localStorage.setItem("mobile", finalMobile);
+            localStorage.setItem("printType", "id");
+            if (insertedOrder && insertedOrder.length > 0) localStorage.setItem("current_order_id", insertedOrder[0].id); 
+            window.location.href = "payment.html"; 
+        }
     } catch (err) {
         console.error(err);
         submitBtn.innerText = "Submit Processing Order";
