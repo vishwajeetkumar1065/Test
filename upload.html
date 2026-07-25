@@ -37,7 +37,7 @@
 <body>
 <div class="card">
     <h2>Upload Document</h2>
-    <p id="cvStatus" style="text-align:center; font-size:12px; color:#e65100; margin:-5px 0 10px 0;">⏳ Loading image enhancer...</p>
+    <p id="cvStatus" style="text-align:center; font-size:12px; color:#e65100; margin:-5px 0 10px 0;">⏳ Loading scanner engine...</p>
 
     <input type="text" id="name" class="input-group" placeholder="Customer Name (Optional)">
     <input type="tel" id="mobile" class="input-group" placeholder="Mobile Number (Optional)">
@@ -88,9 +88,9 @@
         
         <!-- Magic clean is automatic for B&W documents; customer can switch it off if not wanted -->
         <div class="input-group" style="background: #e3f2fd; padding: 10px; border-radius: 6px; border: 1px solid #90caf9;">
-            <label style="color: #1565c0;">Auto Clean Filter (for B&amp;W documents):</label>
+            <label style="color: #1565c0;">ChatGPT Scan Filter (for B&amp;W documents):</label>
             <select id="autoCleanToggle">
-                <option value="on" selected>On (Recommended)</option>
+                <option value="on" selected>On - Ultra Clean Scan (Recommended)</option>
                 <option value="off">Off - No Filter</option>
             </select>
         </div>
@@ -124,7 +124,6 @@
 <script>
     document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     
-    // Keyboard ke Shortcuts Disable Karna
     document.onkeydown = function(e) {
         if (e.keyCode === 123) return false;
         if (e.ctrlKey && e.shiftKey && e.keyCode === 73) return false;
@@ -136,12 +135,11 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-// 🔍 Visible feedback while OpenCV.js (used for auto-crop-detection & enhance) loads in the background
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
         if (cvStatusEl) {
-            cvStatusEl.textContent = '✓ Image enhancer ready';
+            cvStatusEl.textContent = '✓ Scanner engine ready';
             cvStatusEl.style.color = '#28a745';
             setTimeout(() => { if (cvStatusEl) cvStatusEl.style.display = 'none'; }, 2000);
         }
@@ -150,7 +148,6 @@ const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, win
     setTimeout(pollCvReady, 300);
 })();
 
-// 🚀 MIXED FILES LOGIC VARIABLES
 let uploadedPdfFile = null;
 let uploadedImagesList = [];
 let totalDetectedPDFPages = 0;
@@ -161,9 +158,6 @@ let processedA4Images = [];
 
 const cropEngine = { canvas: document.getElementById('cropCanvas'), ctx: document.getElementById('cropCanvas').getContext('2d'), img: null, corners: [], activeCorner: -1, rotation: 0, originalSrc: "", zoom: 1, offsetX: 0, offsetY: 0, isPanning: false, lastTouchDist: 0, lastTouchX: 0, lastTouchY: 0 };
 
-// ========================================================================
-// 🔍 ROBUST AUTO CORNER DETECTION (OpenCV.js — multi-strategy contour search)
-// ========================================================================
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -576,13 +570,16 @@ function drawCrop() {
     s.corners.forEach(c => { s.ctx.fillStyle = '#28a745'; s.ctx.beginPath(); s.ctx.arc(c.x, c.y, 14, 0, Math.PI * 2); s.ctx.fill(); s.ctx.strokeStyle = '#fff'; s.ctx.lineWidth = 3; s.ctx.stroke(); });
 }
 
+// ========================================================================
+// 🚀 CHATGPT / ADOBE SCAN STYLE ULTRA-CLEAN DOCUMENT FILTER (OPENCV)
+// ========================================================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
     
     const btn = document.getElementById("saveCropBtn");
     btn.disabled = true;
     btn.style.opacity = "0.5";
-    btn.innerText = "Processing Fast...";
+    btn.innerText = "Scanning & Cleaning...";
 
     await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -612,7 +609,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg;
+        let src, dest, srcTri, dstTri, M, bg, gray, thresh;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -640,32 +637,33 @@ async function saveCropAndNext() {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
                 if (autoCleanEnabled) {
-                    let morphKernel = null;
-                    try {
-                        bg = new cv.Mat();
-                        let closeSize = Math.round(Math.min(dest.rows, dest.cols) / 15);
-                        if (closeSize % 2 === 0) closeSize++;
-                        if (closeSize < 15) closeSize = 15;
-                        morphKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(closeSize, closeSize));
-                        cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, morphKernel);
+                    // 🔥 CHATGPT / ADOBE SCAN STYLE ADVANCED ILLUMINATION FLATTENING 🔥
+                    // Step 1: Background Estimation via Large Morphological Closing
+                    bg = new cv.Mat();
+                    let blockSize = Math.round(Math.min(targetW, targetH) / 16);
+                    if (blockSize % 2 === 0) blockSize++;
+                    if (blockSize < 25) blockSize = 25;
+                    
+                    let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSize, blockSize));
+                    cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, kernel);
+                    kernel.delete();
 
-                        let blurSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
-                        cv.GaussianBlur(bg, bg, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
+                    // Step 2: Smooth background illumination map
+                    cv.GaussianBlur(bg, bg, new cv.Size(blockSize, blockSize), 0, 0, cv.BORDER_DEFAULT);
 
-                        cv.divide(dest, bg, dest, 255);
-                        cv.medianBlur(dest, dest, 3);
+                    // Step 3: Divide image by smooth background to make background pure white & remove shadows
+                    cv.divide(dest, bg, dest, 255);
 
-                        let floatMat = new cv.Mat();
-                        try {
-                            dest.convertTo(floatMat, cv.CV_32F, 1.0 / 255.0, 0);
-                            cv.pow(floatMat, 2.4, floatMat); 
-                            floatMat.convertTo(dest, cv.CV_8U, 255.0, 0);
-                        } finally {
-                            floatMat.delete();
-                        }
-                    } finally {
-                        if (morphKernel) morphKernel.delete();
-                    }
+                    // Step 4: Adaptive Thresholding / High Contrast Curve (ChatGPT / Scanner style crisp text)
+                    thresh = new cv.Mat();
+                    let adBlockSize = Math.round(Math.min(targetW, targetH) / 40);
+                    if (adBlockSize % 2 === 0) adBlockSize++;
+                    if (adBlockSize < 11) adBlockSize = 11;
+
+                    cv.adaptiveThreshold(dest, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, adBlockSize, 8);
+                    
+                    // Copy cleaned threshold result back to dest
+                    thresh.copyTo(dest);
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
@@ -673,11 +671,12 @@ async function saveCropAndNext() {
 
             cv.imshow(hCvs, dest);
         } catch (e) { 
+            console.warn("Scanner Filter Error:", e); 
             hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
-            if (bg) bg.delete();
+            if (bg) bg.delete(); if (thresh) thresh.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
@@ -760,7 +759,7 @@ function calculate() {
 }
 
 // ==========================================
-// 👑 SUBMIT ORDER (ADMIN=VISHU BYPASS)
+// 👑 SUBMIT ORDER (WITH ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitOrder() {
     const urlParams = new URLSearchParams(window.location.search);
