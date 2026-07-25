@@ -949,23 +949,25 @@ async function submitID() {
         return; 
     }
 
-    const publicUrl = fileName; // storage PATH, not a public link — bucket is private; admin.html signs a short-lived URL for staff
-    let baseRate = isBw ? 5 : 10;
-    let totalAmountCalculation = copiesInput * baseRate;
+    // 🚀 URL FIXED: ID Card ke liye bhi 100% full download link banayenge
+        const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
 
-    const printLabel = isBw ? "Black & White" : "Color";
-    const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
+        let baseRate = isBw ? 5 : 10;
+        let totalAmountCalculation = copiesInput * baseRate;
 
-    // 👑 4. ADMIN PAYMENT STATUS LOGIC
-    const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
-    const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
+        const printLabel = isBw ? "Black & White" : "Color";
+        const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
 
-    const { data: insertedOrder, error } = await client.from("orders").insert([{
-        customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
-        file_url: publicUrl, front_url: null, back_url: null, 
-        payment_status: finalPaymentStatus, 
-        payment_id: finalPaymentId
-    }]).select();
+        // 👑 4. ADMIN PAYMENT STATUS LOGIC
+        const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
+        const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
+
+        const { data: insertedOrder, error } = await client.from("orders").insert([{
+            customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
+            file_url: fullFileUrl, front_url: null, back_url: null, 
+            payment_status: finalPaymentStatus, 
+            payment_id: finalPaymentId
+        }]).select();
 
     if (error) { 
         alert("Database Insertion Error: " + error.message); 
