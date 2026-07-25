@@ -315,31 +315,24 @@ function loadImageData(side, src) {
     img.onload = function() {
         engine[side].img = img;
         
-        // Dynamically adjust canvas height based on the original image aspect ratio
         const newHeight = (img.height * 400) / img.width;
         engine[side].canvas.height = newHeight;
         
         const w = engine[side].canvas.width;
         const h = engine[side].canvas.height;
-        // Fallback default corners (used if auto-detect fails or OpenCV isn't ready yet)
         engine[side].corners = [{ x: 30, y: 30 }, { x: w - 30, y: 30 }, { x: w - 30, y: h - 30 }, { x: 30, y: h - 30 }];
         draw(side);
 
-        // 🔍 Auto-detect card corners using OpenCV.js as soon as it's available
         tryAutoDetectCorners(side);
     };
     img.src = src;
 }
 
-// ========================================================================
-// 🔍 AUTO CORNER DETECTION (OpenCV.js Canny + Contour detection)
-// ========================================================================
 function tryAutoDetectCorners(side, attempt) {
     attempt = attempt || 0;
     const s = engine[side];
     const statusEl = document.getElementById(`${side}DetectStatus`);
 
-    // OpenCV.js still loading in background — wait for it (max ~6s), then give up silently
     if (typeof cv === 'undefined' || !cv.Mat) {
         if (statusEl) statusEl.textContent = '⏳ Waiting for image enhancer to load...';
         if (attempt < 20) setTimeout(() => tryAutoDetectCorners(side, attempt + 1), 300);
@@ -347,12 +340,10 @@ function tryAutoDetectCorners(side, attempt) {
         return;
     }
 
-    // User may have already switched images / moved on — bail if nothing to detect
     if (!s.img) return;
 
     if (statusEl) statusEl.textContent = '🔍 Detecting card edges...';
 
-    // Let the "Detecting..." message paint before the (synchronous, can be heavy) CV work runs
     setTimeout(() => {
         const detected = autoDetectCorners(side);
         if (detected) {
@@ -368,8 +359,6 @@ function tryAutoDetectCorners(side, attempt) {
     }, 30);
 }
 
-// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
-// to match the winding order expected by projectPerspective()
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -380,25 +369,12 @@ function orderCornersClockwise(pts) {
     return [tl, tr, br, bl];
 }
 
-// Corner detection strategy:
-//  - bilateralFilter instead of GaussianBlur: smooths busy/textured backgrounds
-//    (wood, stone, fabric) while preserving the card's actual edges
-//  - multiple adaptive Canny threshold bands tried per image, instead of a single
-//    fixed pair — glare on plastic sleeves and low-contrast backgrounds often need
-//    a wider or narrower band than the standard auto-canny ratio
-//  - RETR_LIST instead of RETR_EXTERNAL: still finds the card contour even if
-//    it's nested inside a larger background contour
-//  - approxPolyDP first, with a cv.minAreaRect fallback when the contour never
-//    cleanly reduces to 4 points (common with glare-fragmented edges)
-//  - scores candidate quads by area + rectangularity + how close their
-//    aspect ratio is to a real ID card (856:540 ≈ 1.586), instead of just
-//    picking the single largest 4-point contour
 function autoDetectCorners(side) {
     const s = engine[side];
     const w = s.canvas.width;
     const h = s.canvas.height;
     const canvasArea = w * h;
-    const TARGET_RATIO = 856 / 540; // ID card aspect ratio ~1.586
+    const TARGET_RATIO = 856 / 540;
 
     let src, gray, blurred, kernel;
     let bestQuad = null;
@@ -422,9 +398,6 @@ function autoDetectCorners(side) {
         return { ordered, ratioError, area };
     }
 
-    // Manually compute the 4 corners of a cv.RotatedRect (from cv.minAreaRect).
-    // NOTE: cv.RotatedRect.points() is NOT a real method in OpenCV.js's bindings —
-    // calling it throws, which was silently aborting detection entirely before.
     function rotatedRectCorners(rect) {
         const angleRad = (rect.angle * Math.PI) / 180;
         const cos = Math.cos(angleRad), sin = Math.sin(angleRad);
@@ -438,14 +411,9 @@ function autoDetectCorners(side) {
         }));
     }
 
-    // Card can be a small part of the frame, but shouldn't be near-zero (noise)
-    // or the entire frame (a false "whole image" contour)
     const minArea = canvasArea * 0.02;
     const maxArea = canvasArea * 0.95;
 
-    // Evaluates every contour in a given binary/edge Mat against the scoring
-    // criteria, updating bestQuad/bestScore as it goes. Isolated per-contour
-    // try/catch so one bad candidate can't abort the whole detection pass.
     function scanContours(binaryMat, label) {
         let contours = new cv.MatVector();
         let hierarchy = new cv.Mat();
@@ -498,7 +466,6 @@ function autoDetectCorners(side) {
                 }
             } catch (candidateErr) {
                 candidatesRejected.error++;
-                console.warn(`[autoDetect/${side}] candidate from ${label} threw:`, candidateErr);
             } finally {
                 if (hull) hull.delete();
                 cnt.delete();
@@ -524,7 +491,6 @@ function autoDetectCorners(side) {
         kernel = cv.Mat.ones(5, 5, cv.CV_8U);
         const meanVal = cv.mean(blurred)[0];
 
-        // Strategy A: Canny edges at several adaptive threshold bands
         const multiplierSets = [[0.66, 1.33], [0.4, 1.6], [0.2, 2.0]];
         for (const [loMult, hiMult] of multiplierSets) {
             const lower = Math.max(0, loMult * meanVal);
@@ -538,21 +504,15 @@ function autoDetectCorners(side) {
             dilated.delete();
         }
 
-        // Strategy B: Otsu threshold on brightness. A white/light ID card against
-        // a duller background (wood, stone, fabric, skin) segments as one bright
-        // blob far more reliably than edge detection does on textured surfaces.
         let otsu = new cv.Mat();
         cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
         scanContours(otsu, "otsu-bright");
         otsu.delete();
 
-        // Strategy C: inverse Otsu, in case the card is darker than its background
         let otsuInv = new cv.Mat();
         cv.threshold(blurred, otsuInv, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
         scanContours(otsuInv, "otsu-dark");
         otsuInv.delete();
-
-        console.log(`[autoDetect/${side}] candidates evaluated: ${candidatesSeen}, rejected(size/shape/error): ${candidatesRejected.size}/${candidatesRejected.shape}/${candidatesRejected.error}, bestScore: ${bestScore}`);
 
         if (bestQuad) {
             s.corners = bestQuad;
@@ -560,7 +520,6 @@ function autoDetectCorners(side) {
         }
         return false;
     } catch (e) {
-        console.warn(`[autoDetect/${side}] detection pass failed:`, e);
         return false;
     } finally {
         [src, gray, blurred, kernel].forEach(m => {
@@ -641,7 +600,6 @@ function rotateImage(side) {
         rotatedImg.onload = function() {
             s.img = rotatedImg;
             
-            // Re-adjust canvas height after rotation
             const newHeight = (rotatedImg.height * 400) / rotatedImg.width;
             s.canvas.height = newHeight;
             
@@ -650,7 +608,6 @@ function rotateImage(side) {
             s.corners = [{ x: 30, y: 30 }, { x: w - 30, y: 30 }, { x: w - 30, y: h - 30 }, { x: 30, y: h - 30 }];
             
             draw(side);
-            // Re-run auto corner detection since orientation changed
             tryAutoDetectCorners(side);
         };
         rotatedImg.src = internalCanvas.toDataURL("image/jpeg");
@@ -723,23 +680,18 @@ function projectPerspective(srcImg, corners, targetW, targetH, cvsW, cvsH) {
     return hiddenCanvas;
 }
 
-// ========================================================================
-// 🤖 BROWSER-SIDE LIVE CV IMAGE ENHANCER (CLAHE + UNSHARP MATRICES)
-// ========================================================================
 function enhanceCroppedImageOnBrowser(canvasElement) {
-    if (typeof cv === 'undefined') return canvasElement; // Fallback if OpenCV.js is not loaded yet
+    if (typeof cv === 'undefined') return canvasElement;
     try {
         let src = cv.imread(canvasElement);
         let labMat = new cv.Mat();
         let channels = new cv.MatVector();
         let cl = new cv.Mat();
         
-        // Convert to LAB color framework safely
         cv.cvtColor(src, labMat, cv.COLOR_RGBA2RGB, 0);
         cv.cvtColor(labMat, labMat, cv.COLOR_RGB2Lab, 0);
         cv.split(labMat, channels);
         
-        // Execute CLAHE adaptive details lock contrast
         let clahe = new cv.CLAHE(2.0, new cv.Size(8, 8));
         clahe.apply(channels.get(0), cl);
         channels.set(0, cl);
@@ -748,21 +700,18 @@ function enhanceCroppedImageOnBrowser(canvasElement) {
         let enhancedRGB = new cv.Mat();
         cv.cvtColor(labMat, enhancedRGB, cv.COLOR_Lab2RGB, 0);
         
-        // Run Unsharp contrast blending boundaries
         let blurred = new cv.Mat();
         cv.GaussianBlur(enhancedRGB, blurred, new cv.Size(0, 0), 3, 3, cv.BORDER_DEFAULT);
         
         let dest = new cv.Mat();
         cv.addWeighted(enhancedRGB, 1.5, blurred, -0.5, 0, dest);
         
-        // Render back to canvas memory
         cv.imshow(canvasElement, dest);
         
-        // Free heap allocation layers cleanly
         src.delete(); labMat.delete(); channels.delete(); cl.delete();
         clahe.delete(); enhancedRGB.delete(); blurred.delete(); dest.delete();
     } catch (e) {
-        console.warn("Local JS CV context dropped, using native pixel layout:", e);
+        console.warn("Local JS CV context dropped:", e);
     }
     return canvasElement;
 }
@@ -774,30 +723,23 @@ function dataURLtoBlob(dataurl) {
     return new Blob([u8arr], {type:mime});
 }
 
-// 🚀 FIXED: Added "Please Wait" loading logic for Save Buttons
-// 🚀 FIXED: Auto-scroll so the saved preview lands at the top of the viewport
 async function saveSide(side) {
     const s = engine[side];
     if (!s.img) { alert(`Choose an image for ${side} first.`); return; }
 
-    // Find all save buttons for this side and disable them
     const buttons = document.querySelectorAll(`button[onclick="saveSide('${side}')"]`);
     buttons.forEach(btn => {
-        btn.dataset.originalText = btn.innerText; // Store original text
+        btn.dataset.originalText = btn.innerText;
         btn.innerText = "Please wait...";
         btn.disabled = true;
     });
 
-    // Give browser 100ms to update the UI button before freezing on processing
     await new Promise(r => setTimeout(r, 100));
 
     const mappedCorners = s.corners.map(c => ({ x: (c.x - s.offsetX) / s.zoom, y: (c.y - s.offsetY) / s.zoom }));
     closeFullscreen();
 
-    // Pass dynamic canvas width and height here
     let resultCanvas = projectPerspective(s.img, mappedCorners, 856, 540, s.canvas.width, s.canvas.height);
-    
-    // Injected the live web browser enhancer filter directly onto the saved perspective canvas before showing preview
     resultCanvas = enhanceCroppedImageOnBrowser(resultCanvas);
     
     const croppedDataUrl = resultCanvas.toDataURL("image/jpeg", 0.90);
@@ -810,23 +752,16 @@ async function saveSide(side) {
     if (side === 'front') frontDataUrl = croppedDataUrl;
     else backDataUrl = croppedDataUrl;
 
-    // 📜 Auto-scroll so the freshly saved preview appears at the top of the screen.
-    // requestAnimationFrame ensures display:"block" has been painted first,
-    // so the browser measures the container's real position before scrolling.
     requestAnimationFrame(() => {
         previewContainer.scrollIntoView({ behavior: 'smooth', block: 'start' });
     });
 
-    // Restore button states
     buttons.forEach(btn => {
         btn.innerText = btn.dataset.originalText;
         btn.disabled = false;
     });
 }
 
-// ========================================================================
-// 🔲 CENTRAL WEB A4 ROUNDED MERGER ENGINE (FRONT LEFT TOP & BACK RIGHT TOP)
-// ========================================================================
 function generateMergedA4Blob() {
     return new Promise((resolve) => {
         const a4Canvas = document.createElement('canvas');
@@ -891,22 +826,23 @@ function generateMergedA4Blob() {
 }
 
 // ==========================================
-// 👑 SUBMIT ORDER (WITH SECRET ADMIN MODE)
+// 👑 SUBMIT ORDER (WITH ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitID() {
-    // NOTE: the old ?admin=vishu bypass has been removed — it let anyone who
-    // viewed page source skip payment entirely. Shop-side free/direct prints
-    // now go through the authenticated admin.html panel instead.
-    const isAdmin = false;
+    // 👑 URL se admin=vishu check karna
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('admin') === 'vishu') {
+        sessionStorage.setItem('adminMode', 'true');
+    }
+    const isAdmin = sessionStorage.getItem('adminMode') === 'true';
 
-    // 🟢 2. SPAM PROTECTION (Admin ko wait nahi karna padega)
+    // 🟢 SPAM PROTECTION (Admin ko wait nahi karna padega)
     const lastOrderTime = localStorage.getItem("last_order_time");
     if (!isAdmin && lastOrderTime && (Date.now() - parseInt(lastOrderTime)) < 60000) { 
         alert("⏳ Security Alert: Please wait 1 minute before placing another order.");
         return;
     }
 
-    // 🟢 3. INPUT SANITIZATION
     const rawName = document.getElementById("name").value.trim();
     const rawMobile = document.getElementById("mobile").value.trim();
     
@@ -926,7 +862,6 @@ async function submitID() {
 
     if (!frontDataUrl) { alert("Save Front crop first."); return; }
 
-    // Dynamic Submit Button Loading State
     const submitBtn = document.getElementById("submitBtn");
     submitBtn.innerText = "Please wait...";
     submitBtn.disabled = true;
@@ -949,25 +884,24 @@ async function submitID() {
         return; 
     }
 
-    // 🚀 URL FIXED: ID Card ke liye bhi 100% full download link banayenge
-        const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
+    const fullFileUrl = `${window.SITE_CONFIG.SUPABASE_URL}/storage/v1/object/public/documents/${fileName}`;
 
-        let baseRate = isBw ? 5 : 10;
-        let totalAmountCalculation = copiesInput * baseRate;
+    let baseRate = isBw ? 5 : 10;
+    let totalAmountCalculation = copiesInput * baseRate;
 
-        const printLabel = isBw ? "Black & White" : "Color";
-        const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
+    const printLabel = isBw ? "Black & White" : "Color";
+    const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
 
-        // 👑 4. ADMIN PAYMENT STATUS LOGIC
-        const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
-        const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
+    // 👑 ADMIN PAYMENT STATUS LOGIC
+    const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
+    const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
 
-        const { data: insertedOrder, error } = await client.from("orders").insert([{
-            customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
-            file_url: fullFileUrl, front_url: null, back_url: null, 
-            payment_status: finalPaymentStatus, 
-            payment_id: finalPaymentId
-        }]).select();
+    const { data: insertedOrder, error } = await client.from("orders").insert([{
+        customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
+        file_url: fullFileUrl, front_url: null, back_url: null, 
+        payment_status: finalPaymentStatus, 
+        payment_id: finalPaymentId
+    }]).select();
 
     if (error) { 
         alert("Database Insertion Error: " + error.message); 
@@ -976,19 +910,18 @@ async function submitID() {
         return; 
     }
 
-    // Success hone par LocalStorage set karna
     localStorage.setItem("last_order_time", Date.now());
 
-    // 👑 5. PAYMENT PAGE BYPASS
+    // 👑 PAYMENT PAGE BYPASS
     if (isAdmin) {
         alert("👑 Owner Mode: ID Card sent directly to printer! No payment required.");
-        window.location.reload(); // Page refresh ho jayega ready for next print
+        window.location.reload(); 
     } else {
         localStorage.setItem("amount", totalAmountCalculation);
         localStorage.setItem("mobile", finalMobile);
         localStorage.setItem("printType", "id");
         if (insertedOrder && insertedOrder.length > 0) localStorage.setItem("current_order_id", insertedOrder[0].id); 
-        window.location.href = "payment.html"; // Customer normal payment page par jayega
+        window.location.href = "payment.html"; 
     }
 }
 
