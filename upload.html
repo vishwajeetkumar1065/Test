@@ -135,13 +135,23 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
+let cvReady = false;
+
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
+    const saveBtn = document.getElementById('saveCropBtn');
     if (typeof cv !== 'undefined' && cv.Mat) {
+        cvReady = true;
         if (cvStatusEl) {
             cvStatusEl.textContent = '✓ Scanner engine ready';
             cvStatusEl.style.color = '#28a745';
             setTimeout(() => { if (cvStatusEl) cvStatusEl.style.display = 'none'; }, 2000);
+        }
+        if (saveBtn && saveBtn.dataset.waitingForCv === 'true') {
+            saveBtn.disabled = false;
+            saveBtn.style.opacity = "1";
+            saveBtn.innerText = "Save Crop";
+            saveBtn.dataset.waitingForCv = 'false';
         }
         return;
     }
@@ -572,10 +582,32 @@ function drawCrop() {
 
 // ========================================================================
 // 🚀 CHATGPT / ADOBE SCAN STYLE ULTRA-CLEAN DOCUMENT FILTER (OPENCV)
+// FIXED: removed harsh adaptiveThreshold binarization step that was
+// causing speckled/noisy, blotchy output. Now uses illumination
+// flattening (divide) + light denoise + contrast normalize, which
+// keeps smooth grayscale text instead of forcing pure black/white.
 // ========================================================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
-    
+
+    // Crop (perspective warp) and the scan filter both run through OpenCV.
+    // Previously, if OpenCV hadn't finished loading yet (it's an async
+    // script), this function silently fell through to a plain resize of
+    // the ORIGINAL uncropped, unfiltered photo — no error shown, so it
+    // looked like "crop/filter isn't working" with no obvious cause.
+    // Block here instead and make the user wait for the scanner engine.
+    if (typeof cv === 'undefined' || !cv.Mat || !cvReady) {
+        const btn = document.getElementById("saveCropBtn");
+        if (btn) {
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            btn.innerText = "Waiting for scanner engine...";
+            btn.dataset.waitingForCv = 'true';
+        }
+        alert("⏳ Scanner engine abhi bhi load ho raha hai. Kripya kuch second wait karke dobara try karein.");
+        return;
+    }
+
     const btn = document.getElementById("saveCropBtn");
     btn.disabled = true;
     btn.style.opacity = "0.5";
@@ -609,7 +641,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg, gray, thresh;
+        let src, dest, srcTri, dstTri, M, bg, lut, sharpBlur, grayForBg, bgColor, channelsVec;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -637,13 +669,20 @@ async function saveCropAndNext() {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
                 if (autoCleanEnabled) {
-                    // 🔥 CHATGPT / ADOBE SCAN STYLE ADVANCED ILLUMINATION FLATTENING 🔥
-                    // Step 1: Background Estimation via Large Morphological Closing
+                    // Step 0: light denoise BEFORE illumination correction —
+                    // kills phone-camera grain that the old code let
+                    // straight into adaptiveThreshold and turned into speckles.
+                    cv.medianBlur(dest, dest, 3);
+
+                    // Step 1: Background Estimation via Large Morphological Closing.
+                    // Kernel widened (was /16) so it reliably exceeds bold text /
+                    // table-line width — otherwise text leaves a dark halo in
+                    // the background estimate and "glows" after the divide step.
                     bg = new cv.Mat();
-                    let blockSize = Math.round(Math.min(targetW, targetH) / 16);
+                    let blockSize = Math.round(Math.min(targetW, targetH) / 8);
                     if (blockSize % 2 === 0) blockSize++;
-                    if (blockSize < 25) blockSize = 25;
-                    
+                    if (blockSize < 41) blockSize = 41;
+
                     let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSize, blockSize));
                     cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, kernel);
                     kernel.delete();
@@ -651,22 +690,103 @@ async function saveCropAndNext() {
                     // Step 2: Smooth background illumination map
                     cv.GaussianBlur(bg, bg, new cv.Size(blockSize, blockSize), 0, 0, cv.BORDER_DEFAULT);
 
-                    // Step 3: Divide image by smooth background to make background pure white & remove shadows
+                    // Step 3: Divide image by smooth background — removes
+                    // shadows/yellow tint and makes background near-white.
                     cv.divide(dest, bg, dest, 255);
 
-                    // Step 4: Adaptive Thresholding / High Contrast Curve (ChatGPT / Scanner style crisp text)
-                    thresh = new cv.Mat();
-                    let adBlockSize = Math.round(Math.min(targetW, targetH) / 40);
-                    if (adBlockSize % 2 === 0) adBlockSize++;
-                    if (adBlockSize < 11) adBlockSize = 11;
+                    // Step 4: Contrast stretch (NOT a hard binary threshold).
+                    // The old adaptiveThreshold here is what caused the bad
+                    // output: on a small local window it amplified noise into
+                    // speckles/blotches and destroyed anti-aliased text edges,
+                    // plus wrecked any embedded photo/stamp/table shading.
+                    // normalize keeps clean smooth grayscale like Adobe
+                    // Scan / ChatGPT-style filters actually produce.
+                    cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
 
-                    cv.adaptiveThreshold(dest, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, adBlockSize, 8);
-                    
-                    // Copy cleaned threshold result back to dest
-                    thresh.copyTo(dest);
+                    // Step 5: Brightening gamma curve — now DYNAMIC instead
+                    // of a fixed value. A real phone photo rarely contains a
+                    // true 0 or true 255 pixel, so normalize alone barely
+                    // stretches anything and the paper background can stay
+                    // mid-gray ("dark") in dim light, or already be bright
+                    // enough in good light (where a fixed strong gamma would
+                    // then over-brighten and wash out faint pencil/light ink).
+                    // Measuring the image's own current mean and solving for
+                    // the gamma that lifts it to a fixed target keeps output
+                    // consistent across different lighting conditions.
+                    const currentMean = cv.mean(dest)[0];
+                    const targetMean = 200;
+                    let gamma = 0.65;
+                    if (currentMean > 1 && currentMean < 250) {
+                        gamma = Math.log(targetMean / 255) / Math.log(currentMean / 255);
+                        gamma = Math.max(0.35, Math.min(1.0, gamma));
+                    }
+                    lut = new cv.Mat(1, 256, cv.CV_8U);
+                    for (let i = 0; i < 256; i++) {
+                        lut.data[i] = Math.min(255, Math.round(255 * Math.pow(i / 255, gamma)));
+                    }
+                    cv.LUT(dest, lut, dest);
+                    lut.delete();
+
+                    // Step 6: Light unsharp-mask sharpening. The denoise +
+                    // Gaussian-blurred background-divide steps soften text
+                    // edges a little; this counteracts that so text reads
+                    // crisp instead of slightly fuzzy, without reintroducing
+                    // the speckle noise the old adaptiveThreshold caused.
+                    sharpBlur = new cv.Mat();
+                    cv.GaussianBlur(dest, sharpBlur, new cv.Size(0, 0), 3);
+                    cv.addWeighted(dest, 1.4, sharpBlur, -0.4, 0, dest);
+                    sharpBlur.delete(); sharpBlur = null;
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
+
+                if (autoCleanEnabled) {
+                    // Color scans previously got NO cleanup at all — just an
+                    // alpha-channel drop. Apply the same illumination
+                    // flattening technique (via a grayscale luminance map) so
+                    // shadows/uneven lighting lift evenly across the photo
+                    // without shifting its actual colors.
+                    grayForBg = new cv.Mat();
+                    cv.cvtColor(dest, grayForBg, cv.COLOR_RGB2GRAY);
+
+                    bgColor = new cv.Mat();
+                    let blockSizeColor = Math.round(Math.min(targetW, targetH) / 8);
+                    if (blockSizeColor % 2 === 0) blockSizeColor++;
+                    if (blockSizeColor < 41) blockSizeColor = 41;
+                    let kernelColor = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSizeColor, blockSizeColor));
+                    cv.morphologyEx(grayForBg, bgColor, cv.MORPH_CLOSE, kernelColor);
+                    kernelColor.delete();
+                    cv.GaussianBlur(bgColor, bgColor, new cv.Size(blockSizeColor, blockSizeColor), 0, 0, cv.BORDER_DEFAULT);
+
+                    channelsVec = new cv.MatVector();
+                    cv.split(dest, channelsVec);
+                    for (let c = 0; c < 3; c++) {
+                        cv.divide(channelsVec.get(c), bgColor, channelsVec.get(c), 255);
+                    }
+
+                    // Gray-world white balance: scales each R/G/B channel so
+                    // its average matches the overall average, removing
+                    // yellow/blue color casts from indoor lighting or the
+                    // phone's own auto white-balance mistakes.
+                    let chMeans = [], sumMeans = 0;
+                    for (let c = 0; c < 3; c++) {
+                        const m = cv.mean(channelsVec.get(c))[0];
+                        chMeans.push(m); sumMeans += m;
+                    }
+                    const overallMean = sumMeans / 3;
+                    for (let c = 0; c < 3; c++) {
+                        if (chMeans[c] > 1) {
+                            cv.convertScaleAbs(channelsVec.get(c), channelsVec.get(c), overallMean / chMeans[c], 0);
+                        }
+                    }
+                    cv.merge(channelsVec, dest);
+
+                    // Same light sharpening as the B&W path.
+                    sharpBlur = new cv.Mat();
+                    cv.GaussianBlur(dest, sharpBlur, new cv.Size(0, 0), 3);
+                    cv.addWeighted(dest, 1.3, sharpBlur, -0.3, 0, dest);
+                    sharpBlur.delete(); sharpBlur = null;
+                }
             }
 
             cv.imshow(hCvs, dest);
@@ -676,7 +796,12 @@ async function saveCropAndNext() {
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
-            if (bg) bg.delete(); if (thresh) thresh.delete();
+            if (bg) bg.delete();
+            if (lut) lut.delete();
+            if (sharpBlur) sharpBlur.delete();
+            if (grayForBg) grayForBg.delete();
+            if (bgColor) bgColor.delete();
+            if (channelsVec) channelsVec.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
