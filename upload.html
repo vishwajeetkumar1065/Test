@@ -572,6 +572,10 @@ function drawCrop() {
 
 // ========================================================================
 // 🚀 CHATGPT / ADOBE SCAN STYLE ULTRA-CLEAN DOCUMENT FILTER (OPENCV)
+// FIXED: removed harsh adaptiveThreshold binarization step that was
+// causing speckled/noisy, blotchy output. Now uses illumination
+// flattening (divide) + light denoise + contrast normalize, which
+// keeps smooth grayscale text instead of forcing pure black/white.
 // ========================================================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
@@ -609,7 +613,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg, gray, thresh;
+        let src, dest, srcTri, dstTri, M, bg;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -637,13 +641,20 @@ async function saveCropAndNext() {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
                 if (autoCleanEnabled) {
-                    // 🔥 CHATGPT / ADOBE SCAN STYLE ADVANCED ILLUMINATION FLATTENING 🔥
-                    // Step 1: Background Estimation via Large Morphological Closing
+                    // Step 0: light denoise BEFORE illumination correction —
+                    // kills phone-camera grain that the old code let
+                    // straight into adaptiveThreshold and turned into speckles.
+                    cv.medianBlur(dest, dest, 3);
+
+                    // Step 1: Background Estimation via Large Morphological Closing.
+                    // Kernel widened (was /16) so it reliably exceeds bold text /
+                    // table-line width — otherwise text leaves a dark halo in
+                    // the background estimate and "glows" after the divide step.
                     bg = new cv.Mat();
-                    let blockSize = Math.round(Math.min(targetW, targetH) / 16);
+                    let blockSize = Math.round(Math.min(targetW, targetH) / 8);
                     if (blockSize % 2 === 0) blockSize++;
-                    if (blockSize < 25) blockSize = 25;
-                    
+                    if (blockSize < 41) blockSize = 41;
+
                     let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSize, blockSize));
                     cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, kernel);
                     kernel.delete();
@@ -651,19 +662,18 @@ async function saveCropAndNext() {
                     // Step 2: Smooth background illumination map
                     cv.GaussianBlur(bg, bg, new cv.Size(blockSize, blockSize), 0, 0, cv.BORDER_DEFAULT);
 
-                    // Step 3: Divide image by smooth background to make background pure white & remove shadows
+                    // Step 3: Divide image by smooth background — removes
+                    // shadows/yellow tint and makes background near-white.
                     cv.divide(dest, bg, dest, 255);
 
-                    // Step 4: Adaptive Thresholding / High Contrast Curve (ChatGPT / Scanner style crisp text)
-                    thresh = new cv.Mat();
-                    let adBlockSize = Math.round(Math.min(targetW, targetH) / 40);
-                    if (adBlockSize % 2 === 0) adBlockSize++;
-                    if (adBlockSize < 11) adBlockSize = 11;
-
-                    cv.adaptiveThreshold(dest, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, adBlockSize, 8);
-                    
-                    // Copy cleaned threshold result back to dest
-                    thresh.copyTo(dest);
+                    // Step 4: Contrast stretch (NOT a hard binary threshold).
+                    // The old adaptiveThreshold here is what caused the bad
+                    // output: on a small local window it amplified noise into
+                    // speckles/blotches and destroyed anti-aliased text edges,
+                    // plus wrecked any embedded photo/stamp/table shading.
+                    // normalize keeps clean smooth grayscale like Adobe
+                    // Scan / ChatGPT-style filters actually produce.
+                    cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
@@ -676,7 +686,7 @@ async function saveCropAndNext() {
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
-            if (bg) bg.delete(); if (thresh) thresh.delete();
+            if (bg) bg.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
