@@ -37,7 +37,7 @@
 <body>
 <div class="card">
     <h2>Upload Document</h2>
-    <p id="cvStatus" style="text-align:center; font-size:12px; color:#e65100; margin:-5px 0 10px 0;">⏳ Loading image enhancer...</p>
+    <p id="cvStatus" style="text-align:center; font-size:12px; color:#e65100; margin:-5px 0 10px 0;">⏳ Loading scanner engine...</p>
 
     <input type="text" id="name" class="input-group" placeholder="Customer Name (Optional)">
     <input type="tel" id="mobile" class="input-group" placeholder="Mobile Number (Optional)">
@@ -88,9 +88,9 @@
         
         <!-- Magic clean is automatic for B&W documents; customer can switch it off if not wanted -->
         <div class="input-group" style="background: #e3f2fd; padding: 10px; border-radius: 6px; border: 1px solid #90caf9;">
-            <label style="color: #1565c0;">Auto Clean Filter (for B&amp;W documents):</label>
+            <label style="color: #1565c0;">ChatGPT Scan Filter (for B&amp;W documents):</label>
             <select id="autoCleanToggle">
-                <option value="on" selected>On (Recommended)</option>
+                <option value="on" selected>On - Ultra Clean Scan (Recommended)</option>
                 <option value="off">Off - No Filter</option>
             </select>
         </div>
@@ -124,7 +124,6 @@
 <script>
     document.addEventListener('contextmenu', function(e) { e.preventDefault(); });
     
-    // Keyboard ke Shortcuts Disable Karna
     document.onkeydown = function(e) {
         if (e.keyCode === 123) return false;
         if (e.ctrlKey && e.shiftKey && e.keyCode === 73) return false;
@@ -136,12 +135,11 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-// 🔍 Visible feedback while OpenCV.js (used for auto-crop-detection & enhance) loads in the background
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
         if (cvStatusEl) {
-            cvStatusEl.textContent = '✓ Image enhancer ready';
+            cvStatusEl.textContent = '✓ Scanner engine ready';
             cvStatusEl.style.color = '#28a745';
             setTimeout(() => { if (cvStatusEl) cvStatusEl.style.display = 'none'; }, 2000);
         }
@@ -150,7 +148,6 @@ const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, win
     setTimeout(pollCvReady, 300);
 })();
 
-// 🚀 MIXED FILES LOGIC VARIABLES
 let uploadedPdfFile = null;
 let uploadedImagesList = [];
 let totalDetectedPDFPages = 0;
@@ -161,10 +158,6 @@ let processedA4Images = [];
 
 const cropEngine = { canvas: document.getElementById('cropCanvas'), ctx: document.getElementById('cropCanvas').getContext('2d'), img: null, corners: [], activeCorner: -1, rotation: 0, originalSrc: "", zoom: 1, offsetX: 0, offsetY: 0, isPanning: false, lastTouchDist: 0, lastTouchX: 0, lastTouchY: 0 };
 
-// ========================================================================
-// 🔍 ROBUST AUTO CORNER DETECTION (OpenCV.js — multi-strategy contour search)
-// ========================================================================
-// Orders 4 arbitrary points into [top-left, top-right, bottom-right, bottom-left]
 function orderCornersClockwise(pts) {
     const sums = pts.map(p => p.x + p.y);
     const diffs = pts.map(p => p.x - p.y);
@@ -175,9 +168,6 @@ function orderCornersClockwise(pts) {
     return [tl, tr, br, bl];
 }
 
-// Manually compute the 4 corners of a cv.RotatedRect (from cv.minAreaRect).
-// NOTE: cv.RotatedRect.points() is NOT a real bound method in OpenCV.js — calling
-// it throws, which silently aborts detection if wrapped in a broad try/catch.
 function rotatedRectCorners(rect) {
     const angleRad = (rect.angle * Math.PI) / 180;
     const cos = Math.cos(angleRad), sin = Math.sin(angleRad);
@@ -191,22 +181,6 @@ function rotatedRectCorners(rect) {
     }));
 }
 
-// Finds the best card/document-shaped quadrilateral in an image.
-//  - bilateralFilter: smooths busy/textured backgrounds while keeping true edges
-//  - runs several adaptive Canny threshold bands (a single fixed pair fails on
-//    glare or low-contrast backgrounds) PLUS Otsu thresholding (bright and dark
-//    variants) — a document is usually a plain, evenly-lit region, which Otsu
-//    segments far more reliably than edge detection does on textured surfaces
-//  - RETR_LIST (not RETR_EXTERNAL): still finds the document contour even if
-//    nested inside a larger background contour
-//  - approxPolyDP first, falling back to cv.minAreaRect when a contour never
-//    cleanly reduces to 4 points (common with glare/shadow-fragmented edges)
-//  - scores candidates by area * rectangularity, favoring the largest, most
-//    rectangular region — no fixed aspect-ratio assumption, since documents
-//    vary (ID cards, A4 sheets, marksheets, etc.)
-//  - every candidate is wrapped in its own try/catch so a single bad candidate
-//    can't silently abort the whole detection pass
-// Returns the 4 ordered corner points, or null if nothing usable was found.
 function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
     const w = canvasEl.width;
     const h = canvasEl.height;
@@ -218,8 +192,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
     let candidatesSeen = 0;
     let candidatesRejected = { size: 0, shape: 0, error: 0 };
 
-    // Document is usually the dominant object in frame (unlike a small ID card
-    // that might occupy only a fraction of a wider photo)
     const minArea = canvasArea * 0.15;
     const maxArea = canvasArea * 0.95;
 
@@ -275,7 +247,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
                 }
             } catch (candidateErr) {
                 candidatesRejected.error++;
-                console.warn(`[autoDetectDoc/${debugLabel}] candidate from ${label} threw:`, candidateErr);
             } finally {
                 if (hull) hull.delete();
                 cnt.delete();
@@ -301,7 +272,6 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
         kernel = cv.Mat.ones(5, 5, cv.CV_8U);
         const meanVal = cv.mean(blurred)[0];
 
-        // Strategy A: Canny edges at several adaptive threshold bands
         const multiplierSets = [[0.66, 1.33], [0.4, 1.6], [0.2, 2.0]];
         for (const [loMult, hiMult] of multiplierSets) {
             const lower = Math.max(0, loMult * meanVal);
@@ -315,24 +285,18 @@ function autoDetectDocumentCorners(canvasEl, imgEl, debugLabel) {
             dilated.delete();
         }
 
-        // Strategy B: Otsu threshold (bright regions) — most documents are a
-        // plain, evenly-lit surface, which segments as one solid blob reliably
         let otsu = new cv.Mat();
         cv.threshold(blurred, otsu, 0, 255, cv.THRESH_BINARY + cv.THRESH_OTSU);
         scanContours(otsu, "otsu-bright");
         otsu.delete();
 
-        // Strategy C: inverse Otsu, in case the document is darker than its background
         let otsuInv = new cv.Mat();
         cv.threshold(blurred, otsuInv, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
         scanContours(otsuInv, "otsu-dark");
         otsuInv.delete();
 
-        console.log(`[autoDetectDoc/${debugLabel}] candidates evaluated: ${candidatesSeen}, rejected(size/shape/error): ${candidatesRejected.size}/${candidatesRejected.shape}/${candidatesRejected.error}, bestScore: ${bestScore}`);
-
         return bestQuad;
     } catch (e) {
-        console.warn(`[autoDetectDoc/${debugLabel}] detection pass failed:`, e);
         return null;
     } finally {
         [src, gray, blurred, kernel].forEach(m => {
@@ -345,7 +309,7 @@ async function handleFileSelectionChange(){
     const files = document.getElementById("file").files;
     if (!files || files.length === 0) return;
 
-    let maxSizeInBytes = 20 * 1024 * 1024; // 20 MB
+    let maxSizeInBytes = 20 * 1024 * 1024;
     for (let i = 0; i < files.length; i++) {
         if (files[i].size > maxSizeInBytes) {
             alert(`⚠️ Error: "${files[i].name}" bahut badi file hai! Kripya 20MB se choti file upload karein.`);
@@ -380,7 +344,7 @@ async function handleFileSelectionChange(){
     if (uploadedImagesList.length > 0) {
         document.getElementById("pdfUI").style.display = "none";
         document.getElementById("imageUI").style.display = "block";
-        document.getElementById("docTypeGroup").style.display = "none"; // 🚀 HIDDEN
+        document.getElementById("docTypeGroup").style.display = "none";
         document.getElementById("cropPreviewContainer").style.display = "none";
         document.getElementById("cropAreaWrapper").style.display = "block";
         
@@ -445,9 +409,6 @@ function loadCurrentImageForCrop() {
             cropEngine.corners = defaultCorners;
 
             if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
-                // ========================================================
-                // 🔍 ROBUST CORNER AUTO-DETECT (multi-strategy)
-                // ========================================================
                 if (detectStatusEl) {
                     detectStatusEl.textContent = '🔍 Detecting document edges...';
                     detectStatusEl.style.color = '#888';
@@ -465,7 +426,6 @@ function loadCurrentImageForCrop() {
                         detectStatusEl.style.color = '#e65100';
                     }
                 } catch (err) {
-                    console.warn("Auto-Detect fail hua.", err);
                     if (detectStatusEl) {
                         detectStatusEl.textContent = 'ℹ️ Could not auto-detect — please drag corners manually';
                         detectStatusEl.style.color = '#e65100';
@@ -572,7 +532,6 @@ function rotateImage() {
             cropEngine.img = rotatedImg;
             cropEngine.corners = [{x:30, y:30}, {x:400-30, y:30}, {x:400-30, y:cropEngine.canvas.height-30}, {x:30, y:cropEngine.canvas.height-30}];
 
-            // Re-run auto-detect since orientation changed
             if (typeof cv !== 'undefined' && typeof cv.imread === 'function') {
                 const detectStatusEl = document.getElementById("cropDetectStatus");
                 try {
@@ -587,9 +546,7 @@ function rotateImage() {
                         detectStatusEl.textContent = 'ℹ️ Could not auto-detect — please drag corners manually';
                         detectStatusEl.style.color = '#e65100';
                     }
-                } catch (err) {
-                    console.warn("Auto-Detect fail hua (rotate).", err);
-                }
+                } catch (err) {}
             }
 
             drawCrop();
@@ -613,16 +570,16 @@ function drawCrop() {
     s.corners.forEach(c => { s.ctx.fillStyle = '#28a745'; s.ctx.beginPath(); s.ctx.arc(c.x, c.y, 14, 0, Math.PI * 2); s.ctx.fill(); s.ctx.strokeStyle = '#fff'; s.ctx.lineWidth = 3; s.ctx.stroke(); });
 }
 
-// ==========================================
-// 🚀 1. SUPER-FAST CROP & FILTER ENGINE (OPENCV)
-// ==========================================
+// ========================================================================
+// 🚀 CHATGPT / ADOBE SCAN STYLE ULTRA-CLEAN DOCUMENT FILTER (OPENCV)
+// ========================================================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
     
     const btn = document.getElementById("saveCropBtn");
     btn.disabled = true;
     btn.style.opacity = "0.5";
-    btn.innerText = "Processing Fast...";
+    btn.innerText = "Scanning & Cleaning...";
 
     await new Promise(resolve => setTimeout(resolve, 50));
 
@@ -652,7 +609,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg;
+        let src, dest, srcTri, dstTri, M, bg, gray, thresh;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -680,71 +637,33 @@ async function saveCropAndNext() {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2GRAY, 0);
 
                 if (autoCleanEnabled) {
-                    // 🔥 SOFT CLEAN FILTER — dark text, clean white background, NOT binarized 🔥
-                    // Previous version used adaptiveThreshold, which forces every pixel to
-                    // pure black/white — this loses thin or anti-aliased strokes and can look
-                    // broken/dotted. This version stays grayscale: background gets flattened to
-                    // clean white, text gets pulled dark with a contrast curve, but stroke edges
-                    // stay smooth and visible.
-                    let morphKernel = null;
-                    try {
-                        bg = new cv.Mat();
+                    // 🔥 CHATGPT / ADOBE SCAN STYLE ADVANCED ILLUMINATION FLATTENING 🔥
+                    // Step 1: Background Estimation via Large Morphological Closing
+                    bg = new cv.Mat();
+                    let blockSize = Math.round(Math.min(targetW, targetH) / 16);
+                    if (blockSize % 2 === 0) blockSize++;
+                    if (blockSize < 25) blockSize = 25;
+                    
+                    let kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSize, blockSize));
+                    cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, kernel);
+                    kernel.delete();
 
-                        // 1. Estimate background with MORPHOLOGICAL CLOSING, not blur.
-                        //    Closing (dilate then erode) with a kernel bigger than any text
-                        //    stroke completely erases the text from the estimate — a blur
-                        //    kernel, however large, still partially blends text into it,
-                        //    which is what caused text to wash out before.
-                        let closeSize = Math.round(Math.min(dest.rows, dest.cols) / 15);
-                        if (closeSize % 2 === 0) closeSize++;
-                        if (closeSize < 15) closeSize = 15;
-                        morphKernel = cv.getStructuringElement(cv.MORPH_ELLIPSE, new cv.Size(closeSize, closeSize));
-                        cv.morphologyEx(dest, bg, cv.MORPH_CLOSE, morphKernel);
+                    // Step 2: Smooth background illumination map
+                    cv.GaussianBlur(bg, bg, new cv.Size(blockSize, blockSize), 0, 0, cv.BORDER_DEFAULT);
 
-                        // Smooth the background ESTIMATE itself (not the image). Closing with
-                        // a large elliptical kernel can otherwise leave visible oval-shaped
-                        // blotches in sparser regions of the page (margins, blank space) —
-                        // those then blow out to solid white blobs once divided in. Blurring
-                        // the estimate turns it into a genuinely smooth lighting surface with
-                        // no hard/rounded edges, while the text (already erased by closing)
-                        // stays erased.
-                        let blurSize = closeSize % 2 === 0 ? closeSize + 1 : closeSize;
-                        cv.GaussianBlur(bg, bg, new cv.Size(blurSize, blurSize), 0, 0, cv.BORDER_DEFAULT);
+                    // Step 3: Divide image by smooth background to make background pure white & remove shadows
+                    cv.divide(dest, bg, dest, 255);
 
-                        // 2. Flatten illumination: background converges to ~255 (clean white),
-                        //    text stays dark relative to its local background regardless of
-                        //    shadows or uneven lighting across the page.
-                        cv.divide(dest, bg, dest, 255);
+                    // Step 4: Adaptive Thresholding / High Contrast Curve (ChatGPT / Scanner style crisp text)
+                    thresh = new cv.Mat();
+                    let adBlockSize = Math.round(Math.min(targetW, targetH) / 40);
+                    if (adBlockSize % 2 === 0) adBlockSize++;
+                    if (adBlockSize < 11) adBlockSize = 11;
 
-                        // 3. Light denoise — removes speckle from step 2 without eating
-                        //    text edges (median preserves edges better than blur).
-                        cv.medianBlur(dest, dest, 3);
-
-                        // 4. Contrast curve (not a threshold) to push text darker and pin
-                        //    background to solid white. Saturating cast on convertTo clips
-                        //    values >255 to 255 and <0 to 0, so background stays flat white
-                        //    while midtone text gets meaningfully darker.
-                        //    Raise the first number (contrast) if text is still too light;
-                        //    raise the second (brightness offset, more negative) if background
-                        //    still looks grey.
-                        // 4. Gamma darkening curve (not a linear stretch): pins true white
-                        //    at white, but pushes every other tone darker — the darker a
-                        //    pixel already is, the harder it gets pulled down. A linear
-                        //    contrast stretch (alpha/beta) pushes light/mid-gray text
-                        //    (light printer toner, pencil) toward white before it gets a
-                        //    chance to darken; gamma avoids that by compressing the whole
-                        //    sub-white range downward instead of just adding brightness.
-                        let floatMat = new cv.Mat();
-                        try {
-                            dest.convertTo(floatMat, cv.CV_32F, 1.0 / 255.0, 0);
-                            cv.pow(floatMat, 2.4, floatMat); // raise (e.g. 3.0) for darker text, lower (e.g. 1.8) if text is getting too heavy/blotchy
-                            floatMat.convertTo(dest, cv.CV_8U, 255.0, 0);
-                        } finally {
-                            floatMat.delete();
-                        }
-                    } finally {
-                        if (morphKernel) morphKernel.delete();
-                    }
+                    cv.adaptiveThreshold(dest, thresh, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY, adBlockSize, 8);
+                    
+                    // Copy cleaned threshold result back to dest
+                    thresh.copyTo(dest);
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
@@ -752,12 +671,12 @@ async function saveCropAndNext() {
 
             cv.imshow(hCvs, dest);
         } catch (e) { 
-            console.warn("CV Error", e); 
+            console.warn("Scanner Filter Error:", e); 
             hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
         } finally {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
-            if (bg) bg.delete();
+            if (bg) bg.delete(); if (thresh) thresh.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
@@ -769,7 +688,7 @@ async function saveCropAndNext() {
     currentImageIndex++;
     loadCurrentImageForCrop();
     calculate();
-    }
+}
             
 async function convertToA4(sourceCanvas) {
     return new Promise(resolve => {
@@ -839,9 +758,8 @@ function calculate() {
     document.getElementById("total").innerHTML = "Total: ₹" + (sheets * price * copies);
 }
 
-
 // ==========================================
-// 👑 SUBMIT ORDER (MIXED FILES MERGE & SAVE)
+// 👑 SUBMIT ORDER (WITH ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitOrder() {
     const urlParams = new URLSearchParams(window.location.search);
@@ -883,10 +801,8 @@ async function submitOrder() {
         let finalMime = "application/pdf";
         let layoutVal = document.getElementById("layout_mode") ? document.getElementById("layout_mode").value : 1;
 
-        // MASTER PDF FOR COMBINING
         const outPdf = await PDFLib.PDFDocument.create();
         
-        // 1. ADD CROPPED IMAGES
         if (processedA4Images.length > 0) {
             for (let dataUrl of processedA4Images) {
                 const imgBytes = await fetch(dataUrl).then(res => res.arrayBuffer());
@@ -896,7 +812,6 @@ async function submitOrder() {
             }
         }
 
-        // 2. ADD PDF PAGES
         if (uploadedPdfFile) {
             const srcPdfDoc = await PDFLib.PDFDocument.load(await uploadedPdfFile.arrayBuffer());
             let pagesSel = parsePageSelection(document.getElementById("pages").value);
