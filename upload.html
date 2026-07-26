@@ -674,6 +674,23 @@ async function saveCropAndNext() {
                     // normalize keeps clean smooth grayscale like Adobe
                     // Scan / ChatGPT-style filters actually produce.
                     cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
+
+                    // Step 5: Brightening gamma curve. A real phone photo
+                    // rarely contains a true 0 or true 255 pixel (unless a
+                    // stray glare spot or a sliver of black crop-border
+                    // leaked in), so normalize alone barely stretches
+                    // anything — the paper background stays mid-gray
+                    // instead of white, which reads as "dark". A gamma < 1
+                    // lifts midtones/background toward white while keeping
+                    // dark ink dark (unlike a flat brightness add, which
+                    // would wash out the text too).
+                    let lut = new cv.Mat(1, 256, cv.CV_8U);
+                    const gamma = 0.65;
+                    for (let i = 0; i < 256; i++) {
+                        lut.data[i] = Math.min(255, Math.round(255 * Math.pow(i / 255, gamma)));
+                    }
+                    cv.LUT(dest, lut, dest);
+                    lut.delete();
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
