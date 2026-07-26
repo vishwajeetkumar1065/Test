@@ -135,13 +135,23 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
+let cvReady = false;
+
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
+    const saveBtn = document.getElementById('saveCropBtn');
     if (typeof cv !== 'undefined' && cv.Mat) {
+        cvReady = true;
         if (cvStatusEl) {
             cvStatusEl.textContent = '✓ Scanner engine ready';
             cvStatusEl.style.color = '#28a745';
             setTimeout(() => { if (cvStatusEl) cvStatusEl.style.display = 'none'; }, 2000);
+        }
+        if (saveBtn && saveBtn.dataset.waitingForCv === 'true') {
+            saveBtn.disabled = false;
+            saveBtn.style.opacity = "1";
+            saveBtn.innerText = "Save Crop";
+            saveBtn.dataset.waitingForCv = 'false';
         }
         return;
     }
@@ -579,7 +589,25 @@ function drawCrop() {
 // ========================================================================
 async function saveCropAndNext() {
     const s = cropEngine; if (!s.img) return alert("Upload image first.");
-    
+
+    // Crop (perspective warp) and the scan filter both run through OpenCV.
+    // Previously, if OpenCV hadn't finished loading yet (it's an async
+    // script), this function silently fell through to a plain resize of
+    // the ORIGINAL uncropped, unfiltered photo — no error shown, so it
+    // looked like "crop/filter isn't working" with no obvious cause.
+    // Block here instead and make the user wait for the scanner engine.
+    if (typeof cv === 'undefined' || !cv.Mat || !cvReady) {
+        const btn = document.getElementById("saveCropBtn");
+        if (btn) {
+            btn.disabled = true;
+            btn.style.opacity = "0.5";
+            btn.innerText = "Waiting for scanner engine...";
+            btn.dataset.waitingForCv = 'true';
+        }
+        alert("⏳ Scanner engine abhi bhi load ho raha hai. Kripya kuch second wait karke dobara try karein.");
+        return;
+    }
+
     const btn = document.getElementById("saveCropBtn");
     btn.disabled = true;
     btn.style.opacity = "0.5";
