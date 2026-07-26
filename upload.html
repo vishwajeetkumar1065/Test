@@ -613,7 +613,7 @@ async function saveCropAndNext() {
 
     if (typeof cv !== 'undefined') {
         let printType = document.getElementById("type").value; 
-        let src, dest, srcTri, dstTri, M, bg;
+        let src, dest, srcTri, dstTri, M, bg, lut, sharpBlur, grayForBg, bgColor, channelsVec;
 
         try {
             let imgCanvas = document.createElement('canvas');
@@ -675,25 +675,90 @@ async function saveCropAndNext() {
                     // Scan / ChatGPT-style filters actually produce.
                     cv.normalize(dest, dest, 0, 255, cv.NORM_MINMAX);
 
-                    // Step 5: Brightening gamma curve. A real phone photo
-                    // rarely contains a true 0 or true 255 pixel (unless a
-                    // stray glare spot or a sliver of black crop-border
-                    // leaked in), so normalize alone barely stretches
-                    // anything — the paper background stays mid-gray
-                    // instead of white, which reads as "dark". A gamma < 1
-                    // lifts midtones/background toward white while keeping
-                    // dark ink dark (unlike a flat brightness add, which
-                    // would wash out the text too).
-                    let lut = new cv.Mat(1, 256, cv.CV_8U);
-                    const gamma = 0.65;
+                    // Step 5: Brightening gamma curve — now DYNAMIC instead
+                    // of a fixed value. A real phone photo rarely contains a
+                    // true 0 or true 255 pixel, so normalize alone barely
+                    // stretches anything and the paper background can stay
+                    // mid-gray ("dark") in dim light, or already be bright
+                    // enough in good light (where a fixed strong gamma would
+                    // then over-brighten and wash out faint pencil/light ink).
+                    // Measuring the image's own current mean and solving for
+                    // the gamma that lifts it to a fixed target keeps output
+                    // consistent across different lighting conditions.
+                    const currentMean = cv.mean(dest)[0];
+                    const targetMean = 200;
+                    let gamma = 0.65;
+                    if (currentMean > 1 && currentMean < 250) {
+                        gamma = Math.log(targetMean / 255) / Math.log(currentMean / 255);
+                        gamma = Math.max(0.35, Math.min(1.0, gamma));
+                    }
+                    lut = new cv.Mat(1, 256, cv.CV_8U);
                     for (let i = 0; i < 256; i++) {
                         lut.data[i] = Math.min(255, Math.round(255 * Math.pow(i / 255, gamma)));
                     }
                     cv.LUT(dest, lut, dest);
                     lut.delete();
+
+                    // Step 6: Light unsharp-mask sharpening. The denoise +
+                    // Gaussian-blurred background-divide steps soften text
+                    // edges a little; this counteracts that so text reads
+                    // crisp instead of slightly fuzzy, without reintroducing
+                    // the speckle noise the old adaptiveThreshold caused.
+                    sharpBlur = new cv.Mat();
+                    cv.GaussianBlur(dest, sharpBlur, new cv.Size(0, 0), 3);
+                    cv.addWeighted(dest, 1.4, sharpBlur, -0.4, 0, dest);
+                    sharpBlur.delete(); sharpBlur = null;
                 }
             } else {
                 cv.cvtColor(dest, dest, cv.COLOR_RGBA2RGB, 0);
+
+                if (autoCleanEnabled) {
+                    // Color scans previously got NO cleanup at all — just an
+                    // alpha-channel drop. Apply the same illumination
+                    // flattening technique (via a grayscale luminance map) so
+                    // shadows/uneven lighting lift evenly across the photo
+                    // without shifting its actual colors.
+                    grayForBg = new cv.Mat();
+                    cv.cvtColor(dest, grayForBg, cv.COLOR_RGB2GRAY);
+
+                    bgColor = new cv.Mat();
+                    let blockSizeColor = Math.round(Math.min(targetW, targetH) / 8);
+                    if (blockSizeColor % 2 === 0) blockSizeColor++;
+                    if (blockSizeColor < 41) blockSizeColor = 41;
+                    let kernelColor = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(blockSizeColor, blockSizeColor));
+                    cv.morphologyEx(grayForBg, bgColor, cv.MORPH_CLOSE, kernelColor);
+                    kernelColor.delete();
+                    cv.GaussianBlur(bgColor, bgColor, new cv.Size(blockSizeColor, blockSizeColor), 0, 0, cv.BORDER_DEFAULT);
+
+                    channelsVec = new cv.MatVector();
+                    cv.split(dest, channelsVec);
+                    for (let c = 0; c < 3; c++) {
+                        cv.divide(channelsVec.get(c), bgColor, channelsVec.get(c), 255);
+                    }
+
+                    // Gray-world white balance: scales each R/G/B channel so
+                    // its average matches the overall average, removing
+                    // yellow/blue color casts from indoor lighting or the
+                    // phone's own auto white-balance mistakes.
+                    let chMeans = [], sumMeans = 0;
+                    for (let c = 0; c < 3; c++) {
+                        const m = cv.mean(channelsVec.get(c))[0];
+                        chMeans.push(m); sumMeans += m;
+                    }
+                    const overallMean = sumMeans / 3;
+                    for (let c = 0; c < 3; c++) {
+                        if (chMeans[c] > 1) {
+                            cv.convertScaleAbs(channelsVec.get(c), channelsVec.get(c), overallMean / chMeans[c], 0);
+                        }
+                    }
+                    cv.merge(channelsVec, dest);
+
+                    // Same light sharpening as the B&W path.
+                    sharpBlur = new cv.Mat();
+                    cv.GaussianBlur(dest, sharpBlur, new cv.Size(0, 0), 3);
+                    cv.addWeighted(dest, 1.3, sharpBlur, -0.3, 0, dest);
+                    sharpBlur.delete(); sharpBlur = null;
+                }
             }
 
             cv.imshow(hCvs, dest);
@@ -704,6 +769,11 @@ async function saveCropAndNext() {
             if (src) src.delete(); if (dest) dest.delete();
             if (srcTri) srcTri.delete(); if (dstTri) dstTri.delete(); if (M) M.delete();
             if (bg) bg.delete();
+            if (lut) lut.delete();
+            if (sharpBlur) sharpBlur.delete();
+            if (grayForBg) grayForBg.delete();
+            if (bgColor) bgColor.delete();
+            if (channelsVec) channelsVec.delete();
         }
     } else {
         hCvs.getContext('2d').drawImage(s.img, 0, 0, targetW, targetH);
