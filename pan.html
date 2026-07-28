@@ -160,7 +160,7 @@
     <input type="tel" id="mobile" placeholder="Mobile Number (Optional)">
 
     <div class="input-group">
-        <label>Number of Pages / Copies to Print:</label>
+        <label>Number of Copies:</label>
         <input type="number" id="copies" value="1" min="1" oninput="calculatePrice()" required>
     </div>
 
@@ -209,7 +209,6 @@
 <script>
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
-// 🔍 Visible feedback while OpenCV.js (used for auto-enhance / auto-detect) loads in the background
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
@@ -839,7 +838,6 @@ function generateMergedA4Blob() {
 // 👑 SUBMIT ORDER (WITH ADMIN=VISHU BYPASS)
 // ==========================================
 async function submitID() {
-    // 👑 URL se admin=vishu check karna
     const urlParams = new URLSearchParams(window.location.search);
     if (urlParams.get('admin') === 'vishu') {
         sessionStorage.setItem('adminMode', 'true');
@@ -896,15 +894,22 @@ async function submitID() {
         let totalAmountCalculation = copiesInput * baseRate;
 
         const printLabel = isBw ? "Black & White" : "Color";
-        const orderLabelText = `Document ID - ${printLabel} [${copiesInput} Copies]`;
+        const orderLabelText = `PAN Card - ${printLabel} [${copiesInput} Copies]`;
 
-        // 👑 ADMIN PAYMENT STATUS LOGIC
         const finalPaymentStatus = isAdmin ? "Paid (Admin)" : "Pending";
         const finalPaymentId = isAdmin ? "Direct-Shop-Print" : "";
 
+        // 🟢 FIX: MAPPING PAGES AS 1 AND COPIES SEPARATELY TO DATABASE 🟢
         const { data: insertedOrder, error } = await client.from("orders").insert([{
-            customer_name: finalName, mobile: finalMobile, print_type: orderLabelText, pages: copiesInput, amount: totalAmountCalculation,
-            file_url: fullFileUrl, front_url: null, back_url: null, 
+            customer_name: finalName, 
+            mobile: finalMobile, 
+            print_type: orderLabelText, 
+            pages: 1,              // PAN Card layout hamesha 1 A4 sheet par print hota hai
+            copies: copiesInput,   // User ki selected copies alag column mein jayengi
+            amount: totalAmountCalculation,
+            file_url: fullFileUrl, 
+            front_url: null, 
+            back_url: null, 
             payment_status: finalPaymentStatus, 
             payment_id: finalPaymentId
         }]).select();
@@ -918,7 +923,6 @@ async function submitID() {
 
         localStorage.setItem("last_order_time", Date.now());
 
-        // 👑 PAYMENT PAGE BYPASS
         if (isAdmin) {
             alert("👑 Owner Mode: PAN Card sent directly to printer! No payment required.");
             window.location.reload(); 
