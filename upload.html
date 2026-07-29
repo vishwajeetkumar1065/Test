@@ -134,6 +134,63 @@
 pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.4.120/pdf.worker.min.js';
 const client = window.supabase.createClient(window.SITE_CONFIG.SUPABASE_URL, window.SITE_CONFIG.SUPABASE_KEY);
 
+// 🚀 AUTO-UPLOAD HANDLER FOR PORTALS (?auto=true)
+document.addEventListener("DOMContentLoaded", async function() {
+    const urlParams = new URLSearchParams(window.location.search);
+    if (urlParams.get('auto') === 'true') {
+        const htmlData = localStorage.getItem('auto_print_html');
+        const pageUrl = localStorage.getItem('auto_print_url');
+        
+        if (htmlData) {
+            const submitBtn = document.getElementById("submitBtn");
+            if (submitBtn) {
+                submitBtn.innerText = "Auto-Uploading Print Order...";
+                submitBtn.disabled = true;
+            }
+            
+            try {
+                const blob = new Blob([htmlData], { type: 'text/html' });
+                const fileName = `${Date.now()}_portal_print.html`;
+                
+                const { error: uploadError } = await client.storage.from("documents").upload(fileName, blob, { contentType: 'text/html', upsert: true });
+                if (uploadError) throw uploadError;
+                
+                const fileUrl = client.storage.from("documents").getPublicUrl(fileName).data.publicUrl;
+                
+                const { data: order, error } = await client.from("orders").insert([{
+                    customer_name: "Portal User",
+                    mobile: "N/A",
+                    pages: 1,
+                    copies: 1,
+                    print_type: "Portal Auto-Print (HTML)",
+                    amount: 10,
+                    file_url: fileUrl,
+                    payment_status: "Pending",
+                    print_status: "Pending",
+                    layout_mode: "1"
+                }]).select();
+                
+                if (error) throw error;
+                
+                localStorage.removeItem('auto_print_html');
+                localStorage.removeItem('auto_print_url');
+                localStorage.setItem("current_order_id", order[0].id);
+                localStorage.setItem("amount", 10);
+                localStorage.setItem("mobile", "N/A");
+                
+                alert("🚀 Success! Portal page automatic shop ke printer ke liye bhej diya gaya hai.");
+                window.location.href = "payment.html";
+            } catch (err) {
+                alert("❌ Auto-Upload Error: " + err.message);
+                if (submitBtn) {
+                    submitBtn.innerText = "Submit Order";
+                    submitBtn.disabled = false;
+                }
+            }
+        }
+    }
+});
+
 (function pollCvReady() {
     const cvStatusEl = document.getElementById('cvStatus');
     if (typeof cv !== 'undefined' && cv.Mat) {
@@ -867,7 +924,6 @@ async function submitOrder() {
         const { error: uploadError } = await client.storage.from("documents").upload(fileName, processedBlob, { contentType: finalMime, upsert: true });
         if (uploadError) throw uploadError;
 
-        // 🟢 FIX: CALCULATE TOTAL SHEETS & COPIES SEPARATELY 🟢
         const copiesVal = parseInt(document.getElementById("copies").value) || 1;
         
         let totalSheets = 0;
@@ -891,8 +947,8 @@ async function submitOrder() {
         const { data: order, error } = await client.from("orders").insert([{
             customer_name: name || (isAdmin ? "Shop Admin" : "Guest"),
             mobile: mobile || "N/A", 
-            pages: totalSheets,    // 👈 Actual total pages/sheets stored here
-            copies: copiesVal,     // 👈 User's selected copies stored separately here
+            pages: totalSheets,    
+            copies: copiesVal,     
             print_type: printStr, 
             amount: amount,
             file_url: client.storage.from("documents").getPublicUrl(fileName).data.publicUrl, 
